@@ -1,7 +1,8 @@
 using BoricuaCoder.API.CoreSetup.Options;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace BoricuaCoder.API.CoreSetup.Authentication;
+namespace BoricuaCoder.API.CoreSetup.Setup;
 
 internal static class JwtAuthenticationSetup
 {
@@ -10,13 +11,18 @@ internal static class JwtAuthenticationSetup
         JwtOptions options)
     {
         services
-            .AddAuthentication("Bearer")
-            .AddJwtBearer("Bearer", o =>
+            .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+            .AddJwtBearer(jwt =>
             {
-                o.Authority = options.Authority;
-                o.Audience  = options.Audience;
-                o.RequireHttpsMetadata = options.RequireHttpsMetadata;
+                jwt.Authority = options.Authority;
+                jwt.Audience = options.Audience;
+                jwt.RequireHttpsMetadata = options.RequireHttpsMetadata;
+
+                // Si luego quieres validar roles/claims especiales, lo haces aquí.
+                // jwt.TokenValidationParameters = new TokenValidationParameters { ... };
             });
+
+        services.AddAuthorization();
 
         return services;
     }
