@@ -1,5 +1,8 @@
 # BoricuaCoder.API.CoreSetup
 
+[![CI](https://github.com/YOUR_USERNAME/BoricuaCoder.API.CoreSetup/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_USERNAME/BoricuaCoder.API.CoreSetup/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/YOUR_USERNAME/BoricuaCoder.API.CoreSetup/graph/badge.svg)](https://codecov.io/gh/YOUR_USERNAME/BoricuaCoder.API.CoreSetup)
+
 A lightweight library that simplifies ASP.NET Core API setup with pre-configured **JWT Bearer authentication** and **Swagger/OpenAPI documentation** with OAuth2 support for Keycloak (or any OpenID Connect provider).
 
 ## Purpose
