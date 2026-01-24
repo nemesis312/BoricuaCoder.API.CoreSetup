@@ -1,7 +1,7 @@
 # BoricuaCoder.API.CoreSetup
 
-[![CI](https://github.com/YOUR_USERNAME/BoricuaCoder.API.CoreSetup/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_USERNAME/BoricuaCoder.API.CoreSetup/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/YOUR_USERNAME/BoricuaCoder.API.CoreSetup/graph/badge.svg)](https://codecov.io/gh/YOUR_USERNAME/BoricuaCoder.API.CoreSetup)
+[![CI](https://github.com/nemesis312/BoricuaCoder.API.CoreSetup/actions/workflows/ci.yml/badge.svg)](https://github.com/nemesis312/BoricuaCoder.API.CoreSetup/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/github/nemesis312/BoricuaCoder.API.CoreSetup/branch/main/graph/badge.svg?token=F8OSYQGVCA)](https://codecov.io/github/nemesis312/BoricuaCoder.API.CoreSetup)
 
 A lightweight library that simplifies ASP.NET Core API setup with pre-configured **JWT Bearer authentication** and **Swagger/OpenAPI documentation** with OAuth2 support for Keycloak (or any OpenID Connect provider).
 
@@ -81,6 +81,7 @@ app.Run();
 ```
 
 That's it! Your API now has:
+
 - JWT Bearer authentication configured
 - Swagger UI available at `/swagger` with OAuth2 authorization (redirects to Keycloak)
 
@@ -88,30 +89,30 @@ That's it! Your API now has:
 
 ### JwtOptions
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `Authority` | string | `""` | The URL of your identity provider (e.g., Keycloak realm URL) |
-| `Audience` | string | `""` | The expected audience claim in the JWT token |
-| `RequireHttpsMetadata` | bool | `true` | Set to `false` for local development with HTTP identity providers |
+| Property               | Type   | Default | Description                                                       |
+| ---------------------- | ------ | ------- | ----------------------------------------------------------------- |
+| `Authority`            | string | `""`    | The URL of your identity provider (e.g., Keycloak realm URL)      |
+| `Audience`             | string | `""`    | The expected audience claim in the JWT token                      |
+| `RequireHttpsMetadata` | bool   | `true`  | Set to `false` for local development with HTTP identity providers |
 
 ### SwaggerOptions
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `Enabled` | bool | `true` | Enable or disable Swagger UI |
-| `Title` | string | `"API"` | The title displayed in Swagger UI |
-| `Version` | string | `"v1"` | API version for the Swagger document |
-| `RoutePrefix` | string | `"swagger"` | URL prefix for Swagger UI (e.g., `/swagger`) |
-| `OAuth` | object | | OAuth2 configuration for Swagger authentication |
+| Property      | Type   | Default     | Description                                     |
+| ------------- | ------ | ----------- | ----------------------------------------------- |
+| `Enabled`     | bool   | `true`      | Enable or disable Swagger UI                    |
+| `Title`       | string | `"API"`     | The title displayed in Swagger UI               |
+| `Version`     | string | `"v1"`      | API version for the Swagger document            |
+| `RoutePrefix` | string | `"swagger"` | URL prefix for Swagger UI (e.g., `/swagger`)    |
+| `OAuth`       | object |             | OAuth2 configuration for Swagger authentication |
 
 ### SwaggerOAuthOptions
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `AuthorizationUrl` | string | `""` | OAuth2 authorization endpoint (Keycloak auth URL) |
-| `TokenUrl` | string | `""` | OAuth2 token endpoint (Keycloak token URL) |
-| `ClientId` | string | `""` | OAuth2 client ID registered in Keycloak |
-| `Scopes` | object | `{"openid": "OpenID Connect"}` | Available scopes (key: scope name, value: description) |
+| Property           | Type   | Default                        | Description                                            |
+| ------------------ | ------ | ------------------------------ | ------------------------------------------------------ |
+| `AuthorizationUrl` | string | `""`                           | OAuth2 authorization endpoint (Keycloak auth URL)      |
+| `TokenUrl`         | string | `""`                           | OAuth2 token endpoint (Keycloak token URL)             |
+| `ClientId`         | string | `""`                           | OAuth2 client ID registered in Keycloak                |
+| `Scopes`           | object | `{"openid": "OpenID Connect"}` | Available scopes (key: scope name, value: description) |
 
 ## Keycloak Configuration
 
@@ -129,16 +130,17 @@ That's it! Your API now has:
 
 In the client settings:
 
-| Setting | Value |
-|---------|-------|
-| **Root URL** | `https://your-api.com` |
-| **Valid redirect URIs** | `https://your-api.com/swagger/oauth2-redirect.html` |
-| **Valid post logout redirect URIs** | `https://your-api.com/*` |
-| **Web origins** | `https://your-api.com` |
+| Setting                             | Value                                               |
+| ----------------------------------- | --------------------------------------------------- |
+| **Root URL**                        | `https://your-api.com`                              |
+| **Valid redirect URIs**             | `https://your-api.com/swagger/oauth2-redirect.html` |
+| **Valid post logout redirect URIs** | `https://your-api.com/*`                            |
+| **Web origins**                     | `https://your-api.com`                              |
 
 ### 3. Get the URLs
 
 Your Keycloak URLs follow this pattern:
+
 - **Authorization URL**: `https://{keycloak-host}/realms/{realm}/protocol/openid-connect/auth`
 - **Token URL**: `https://{keycloak-host}/realms/{realm}/protocol/openid-connect/token`
 - **Authority (for JWT)**: `https://{keycloak-host}/realms/{realm}`
