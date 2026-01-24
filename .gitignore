@@ -12,3 +12,9 @@ obj/
 
 # NuGet
 /packages/
+
+# Test Results & Coverage
+TestResults/
+coverage-report/
+*.coverage
+*.coveragexml
