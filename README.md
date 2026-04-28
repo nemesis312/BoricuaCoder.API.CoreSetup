@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/nemesis312/BoricuaCoder.API.CoreSetup/actions/workflows/ci.yml/badge.svg)](https://github.com/nemesis312/BoricuaCoder.API.CoreSetup/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/github/nemesis312/BoricuaCoder.API.CoreSetup/branch/main/graph/badge.svg?token=F8OSYQGVCA)](https://codecov.io/github/nemesis312/BoricuaCoder.API.CoreSetup)
+[![Changelog](https://img.shields.io/badge/changelog-CHANGELOG.md-blue)](CHANGELOG.md)
 
 A lightweight library that simplifies ASP.NET Core API setup with pre-configured **JWT Bearer authentication** and **Swagger/OpenAPI documentation** with OAuth2 support for Keycloak (or any OpenID Connect provider).
 
