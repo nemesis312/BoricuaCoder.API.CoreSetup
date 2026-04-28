@@ -219,6 +219,24 @@ Your Keycloak URLs follow this pattern:
 - Configurable scopes for user selection
 - Swagger UI with OAuth client configuration
 
+## Sample Project
+
+A runnable sample is available in [`samples/SampleApi`](samples/SampleApi).
+
+```bash
+# Clone the repo, then:
+cd samples/SampleApi
+dotnet run
+# Swagger UI opens at http://localhost:5000/swagger
+```
+
+The sample demonstrates:
+- `AddCoreSetup()` and `UseCoreSetup()` wired up in `Program.cs`
+- A public `/health` endpoint (no auth required)
+- A protected `/me` endpoint that returns the caller's JWT claims
+- A protected `/products` endpoint as a realistic resource example
+- Full `appsettings.json` and `appsettings.Development.json` with all available options
+
 ## Requirements
 
 - .NET 10.0 or later
