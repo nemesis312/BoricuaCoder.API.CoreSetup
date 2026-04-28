@@ -37,4 +37,16 @@ public class JwtOptionsTests
 
         Assert.False(options.RequireHttpsMetadata);
     }
+
+    [Fact]
+    public void JwtOptions_TokenValidation_DefaultsToEmptyOptions()
+    {
+        var options = new JwtOptions();
+
+        Assert.NotNull(options.TokenValidation);
+        Assert.Null(options.TokenValidation.ValidateIssuer);
+        Assert.Null(options.TokenValidation.ValidateAudience);
+        Assert.Null(options.TokenValidation.ValidateLifetime);
+        Assert.Null(options.TokenValidation.ClockSkewSeconds);
+    }
 }

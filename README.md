@@ -95,6 +95,18 @@ That's it! Your API now has:
 | `Authority`            | string | `""`    | The URL of your identity provider (e.g., Keycloak realm URL)      |
 | `Audience`             | string | `""`    | The expected audience claim in the JWT token                      |
 | `RequireHttpsMetadata` | bool   | `true`  | Set to `false` for local development with HTTP identity providers |
+| `TokenValidation`      | object |         | Fine-grained token validation overrides (see below)              |
+
+### TokenValidationOptions
+
+All properties are optional. Set only the ones you need to override — `null` keeps the JWT Bearer handler's default behavior.
+
+| Property            | Type  | Default | Description                                                                          |
+| ------------------- | ----- | ------- | ------------------------------------------------------------------------------------ |
+| `ValidateIssuer`    | bool? | `null`  | Override issuer validation. Set to `false` when using multiple issuers              |
+| `ValidateAudience`  | bool? | `null`  | Override audience validation                                                         |
+| `ValidateLifetime`  | bool? | `null`  | Override lifetime/expiration validation                                              |
+| `ClockSkewSeconds`  | int?  | `null`  | Override clock skew tolerance. Default is 300 (5 min). Set to `0` for exact expiry  |
 
 ### SwaggerOptions
 
