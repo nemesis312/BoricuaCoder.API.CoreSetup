@@ -231,6 +231,127 @@ Your Keycloak URLs follow this pattern:
 - Configurable scopes for user selection
 - Swagger UI with OAuth client configuration
 
+## Troubleshooting
+
+### Swagger UI returns 404
+
+**Symptoms:** Navigating to `/swagger` returns a 404 Not Found.
+
+**Causes and fixes:**
+
+1. `Swagger:Enabled` is `false` — check your `appsettings.json` (or the environment-specific override that is active).
+2. The `RoutePrefix` is not what you expect — the default is `swagger`, so the URL is `/swagger`. If you set `RoutePrefix: "api-docs"`, the URL becomes `/api-docs`.
+3. `UseCoreSetup()` was not called in `Program.cs` — make sure both `AddCoreSetup()` and `UseCoreSetup()` are present.
+
+```json
+"CoreSetup": {
+  "Swagger": {
+    "Enabled": true,
+    "RoutePrefix": "swagger"
+  }
+}
+```
+
+---
+
+### All requests return 401 Unauthorized
+
+**Symptoms:** Every API call returns 401, even with a valid token.
+
+**Causes and fixes:**
+
+1. **`Authority` mismatch** — The JWT handler downloads the OIDC discovery document from `Authority`. If this URL is wrong or unreachable, all tokens will be rejected. Verify the URL resolves and matches the `iss` claim in your token (decode it at [jwt.io](https://jwt.io)).
+2. **`Audience` mismatch** — The `aud` claim in the token must match `Audience`. Common Keycloak values are `account`, the client ID itself, or a custom audience you configured.
+3. **`RequireHttpsMetadata: true` in local dev** — If your local Keycloak runs on HTTP, set this to `false` in `appsettings.Development.json`.
+
+```json
+"CoreSetup": {
+  "Jwt": {
+    "Authority": "https://keycloak.example.com/realms/your-realm",
+    "Audience": "account",
+    "RequireHttpsMetadata": false
+  }
+}
+```
+
+> **Tip:** Enable debug logging to see what the library configured at startup:
+> ```json
+> "Logging": { "LogLevel": { "BoricuaCoder.API.CoreSetup": "Debug" } }
+> ```
+
+---
+
+### Startup fails with OptionsValidationException
+
+**Symptoms:** The application throws on startup with a message like `CoreSetup:Jwt:Authority must be a valid absolute URI`.
+
+**Cause:** The library validates all URLs at startup. This happens when a URL is malformed or when only one of `AuthorizationUrl`/`TokenUrl` is provided (they must be set together).
+
+**Fix:** Correct the invalid value in your `appsettings.json`. If you are not using OAuth in Swagger, leave both `AuthorizationUrl` and `TokenUrl` empty (or omit them entirely).
+
+---
+
+### Swagger Authorize button redirects to the wrong URL
+
+**Symptoms:** Clicking **Authorize** in Swagger UI opens a Keycloak login page with an error, or redirects to a wrong callback URL.
+
+**Causes and fixes:**
+
+1. **Wrong `AuthorizationUrl`** — Must point to the Keycloak authorization endpoint: `https://{host}/realms/{realm}/protocol/openid-connect/auth`.
+2. **Redirect URI not registered in Keycloak** — Add `https://your-api.com/swagger/oauth2-redirect.html` to the **Valid redirect URIs** of your Keycloak client.
+3. **Wrong `ClientId`** — Must match the client registered in Keycloak exactly (case-sensitive).
+
+---
+
+### Tokens expire too quickly / clock skew errors
+
+**Symptoms:** `IDX10223: Lifetime validation failed. The token is expired` appears even with a freshly issued token.
+
+**Cause:** Clock difference between your server and the identity provider. The default tolerance is 5 minutes.
+
+**Fix:** Increase `ClockSkewSeconds` or disable lifetime validation during development:
+
+```json
+"CoreSetup": {
+  "Jwt": {
+    "TokenValidation": {
+      "ClockSkewSeconds": 600
+    }
+  }
+}
+```
+
+---
+
+### CORS errors when Swagger tries to get a token
+
+**Symptoms:** The browser console shows a CORS error when Swagger UI calls the token endpoint.
+
+**Cause:** CORS is a Keycloak/IdP configuration issue, not a library issue. The API itself does not proxy the token request — the browser calls Keycloak directly.
+
+**Fix:** In Keycloak, add your API's origin (e.g., `https://localhost:5001`) to the **Web origins** of the Swagger client.
+
+---
+
+### How to enable detailed logs
+
+Add this to your `appsettings.Development.json` to see what the library configures at startup:
+
+```json
+{
+  "Logging": {
+    "LogLevel": {
+      "BoricuaCoder.API.CoreSetup": "Debug",
+      "Microsoft.AspNetCore.Authentication": "Debug"
+    }
+  }
+}
+```
+
+The `BoricuaCoder.API.CoreSetup` category emits the configured Authority, Audience, Swagger route, and OAuth client ID. `Microsoft.AspNetCore.Authentication` emits detailed JWT validation failures.
+
+---
+
 ## Sample Project
 
 A runnable sample is available in [`samples/SampleApi`](samples/SampleApi).
