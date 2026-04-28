@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-04-28
+
+### Added
+- `ILogger` support in `UseCoreSetup()` using the `BoricuaCoder.API.CoreSetup` log category
+- `Debug` log on startup for JWT configuration (Authority, Audience) and Swagger configuration (Title, Version, RoutePrefix, OAuth ClientId)
+- `Warning` log when `RequireHttpsMetadata` is `false` to help catch accidental production misconfigurations
+- `Debug` log when Swagger UI is disabled
+
 ## [1.2.0] - 2026-04-28
 
 ### Added
