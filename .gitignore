@@ -5,6 +5,7 @@ riderModule.iml
 
 # Claude
 .claude/
+.playwright-mcp/
 
 # Build results
 bin/
