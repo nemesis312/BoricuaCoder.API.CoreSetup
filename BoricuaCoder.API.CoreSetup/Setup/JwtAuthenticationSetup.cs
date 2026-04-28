@@ -17,9 +17,6 @@ internal static class JwtAuthenticationSetup
                 jwt.Authority = options.Authority;
                 jwt.Audience = options.Audience;
                 jwt.RequireHttpsMetadata = options.RequireHttpsMetadata;
-
-                // Si luego quieres validar roles/claims especiales, lo haces aquí.
-                // jwt.TokenValidationParameters = new TokenValidationParameters { ... };
             });
 
         services.AddAuthorization();
