@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace BoricuaCoder.API.CoreSetup.Tests.Integration;
 
@@ -30,6 +31,27 @@ internal static class IntegrationTestBase
         builder.WebHost.UseTestServer();
         builder.Configuration.AddInMemoryCollection(config ?? DefaultConfig);
         builder.Services.AddCoreSetup(builder.Configuration);
+
+        var app = builder.Build();
+        app.UseCoreSetup();
+        app.MapGet("/health", () => Results.Ok("healthy"));
+
+        return app;
+    }
+
+    internal static WebApplication BuildAppWithTestLogging(
+        out TestLogCollector collector,
+        Dictionary<string, string?>? config = null)
+    {
+        var testCollector = new TestLogCollector();
+        collector = testCollector;
+
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Configuration.AddInMemoryCollection(config ?? DefaultConfig);
+        builder.Services.AddCoreSetup(builder.Configuration);
+        builder.Logging.SetMinimumLevel(LogLevel.Trace);
+        builder.Logging.AddTestLogging(testCollector);
 
         var app = builder.Build();
         app.UseCoreSetup();
