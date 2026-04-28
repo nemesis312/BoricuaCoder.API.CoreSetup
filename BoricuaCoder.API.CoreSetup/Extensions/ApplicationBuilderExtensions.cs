@@ -42,7 +42,6 @@ public static class ApplicationBuilderExtensions
             });
         }
 
-        // Orden recomendado
         app.UseAuthentication();
         app.UseAuthorization();
 

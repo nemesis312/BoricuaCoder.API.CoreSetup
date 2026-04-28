@@ -22,6 +22,11 @@ internal static class SwaggerSetup
                 Version = options.Version
             });
 
+            var hasOAuth = !string.IsNullOrEmpty(options.OAuth.AuthorizationUrl)
+                        && !string.IsNullOrEmpty(options.OAuth.TokenUrl);
+
+            if (!hasOAuth) return;
+
             const string schemeName = "OAuth2";
 
             var scopes = options.OAuth.Scopes.ToDictionary(s => s.Key, s => s.Value);

@@ -2,6 +2,7 @@ using BoricuaCoder.API.CoreSetup.Options;
 using BoricuaCoder.API.CoreSetup.Setup;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace BoricuaCoder.API.CoreSetup.Extensions;
 
@@ -22,19 +23,18 @@ public static class ServiceCollectionExtensions
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        // Bind options desde appsettings
         var options = configuration
             .GetSection(SectionName)
             .Get<CoreSetupOptions>() ?? new CoreSetupOptions();
 
-        // JWT + Auth
         services.AddJwtAuthentication(options.Jwt);
-
-        // Swagger con OAuth
         services.AddSwaggerWithOAuth(options.Swagger);
 
-        // Si luego quieres exponer IOptions<CoreSetupOptions>
-        services.Configure<CoreSetupOptions>(configuration.GetSection(SectionName));
+        services.AddOptions<CoreSetupOptions>()
+            .Bind(configuration.GetSection(SectionName))
+            .ValidateOnStart();
+
+        services.AddSingleton<IValidateOptions<CoreSetupOptions>, CoreSetupOptionsValidator>();
 
         return services;
     }
