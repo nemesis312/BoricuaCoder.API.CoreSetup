@@ -6,6 +6,7 @@
         <Nullable>enable</Nullable>
 
         <!-- NuGet Package Metadata -->
+        <!-- Version is overridden by /p:Version= during CI releases (driven by git tag). -->
         <PackageId>BoricuaCoder.API.CoreSetup</PackageId>
         <Version>1.0.1</Version>
         <Authors>BoricuaCoder</Authors>
