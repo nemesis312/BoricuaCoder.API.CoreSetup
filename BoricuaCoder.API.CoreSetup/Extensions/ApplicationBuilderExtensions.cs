@@ -1,3 +1,4 @@
+using BoricuaCoder.API.CoreSetup.Caching;
 using BoricuaCoder.API.CoreSetup.Options;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Configuration;
@@ -30,6 +31,7 @@ public static class ApplicationBuilderExtensions
             .CreateLogger(LogCategory);
 
         LogJwtConfiguration(logger, options.Jwt);
+        LogRedisConfiguration(logger, options.Redis);
 
         if (options.Swagger.Enabled)
         {
@@ -73,6 +75,21 @@ public static class ApplicationBuilderExtensions
             logger.LogWarning(
                 "CoreSetup: RequireHttpsMetadata is disabled for Authority={Authority}. Do not use this setting in production.",
                 authority);
+    }
+
+    private static void LogRedisConfiguration(ILogger logger, RedisOptions redis)
+    {
+        if (!redis.Enabled)
+        {
+            logger.LogDebug("CoreSetup: Redis caching is disabled.");
+            return;
+        }
+
+        logger.LogDebug(
+            "CoreSetup: Redis caching enabled. PrefixKey={PrefixKey}, DefaultTTL={DefaultTTL}s, ShortCircuit={ShortCircuit}s",
+            string.IsNullOrEmpty(redis.PrefixKey) ? "(none)" : redis.PrefixKey,
+            redis.DefaultTTL,
+            redis.ShortCircuit > 0 ? redis.ShortCircuit.ToString() : "disabled");
     }
 
     private static void LogSwaggerConfiguration(ILogger logger, SwaggerOptions swagger)

@@ -1,3 +1,4 @@
+using BoricuaCoder.API.CoreSetup.Caching;
 using BoricuaCoder.API.CoreSetup.Options;
 using BoricuaCoder.API.CoreSetup.Setup;
 using Microsoft.Extensions.Configuration;
@@ -29,6 +30,9 @@ public static class ServiceCollectionExtensions
 
         services.AddJwtAuthentication(options.Jwt);
         services.AddSwaggerWithOAuth(options.Swagger);
+
+        if (options.Redis.Enabled)
+            services.AddRedisCache(options.Redis);
 
         services.AddOptions<CoreSetupOptions>()
             .Bind(configuration.GetSection(SectionName))

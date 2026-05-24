@@ -1,3 +1,4 @@
+using BoricuaCoder.API.CoreSetup.Caching;
 using BoricuaCoder.API.CoreSetup.Extensions;
 using Microsoft.AspNetCore.Authorization;
 
@@ -27,7 +28,8 @@ app.MapGet("/me", (HttpContext context) =>
 .WithName("GetCurrentUser")
 .WithTags("Identity");
 
-// Protected endpoint — example resource
+// Cached endpoint — auto key: "sample:api::GetProducts"
+// Re-hydrates from Redis on subsequent requests within DefaultTTL (60 s in dev).
 app.MapGet("/products", [Authorize] () =>
 {
     var products = new[]
@@ -39,7 +41,27 @@ app.MapGet("/products", [Authorize] () =>
 
     return Results.Ok(products);
 })
+.AddEndpointFilter(new CacheAttribute(300))
 .WithName("GetProducts")
 .WithTags("Products");
+
+// Cached endpoint with custom key — key: "sample:api::UserInfo:{userId}"
+// All /users/{id}/* variants can be cascade-deleted via ICacheService.DeleteCascadeAsync("UserInfo:{id}")
+app.MapGet("/users/{userId}", [Authorize] (int userId) =>
+{
+    return Results.Ok(new { userId, name = $"User {userId}", email = $"user{userId}@example.com" });
+})
+.AddEndpointFilter(new CacheAttribute(60, "UserInfo"))
+.WithName("GetUser")
+.WithTags("Users");
+
+// Cached endpoint with custom key and parameter — key: "sample:api::UserInfo:{userId}:permissions"
+app.MapGet("/users/{userId}/permissions", [Authorize] (int userId) =>
+{
+    return Results.Ok(new { userId, permissions = new[] { "read", "write" } });
+})
+.AddEndpointFilter(new CacheAttribute(120, "UserInfo"))
+.WithName("GetUserPermissions")
+.WithTags("Users");
 
 app.Run();
