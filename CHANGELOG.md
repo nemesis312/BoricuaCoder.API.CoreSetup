@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-05-23
+
+### Added
+- **Optional Redis response caching** via `CoreSetup:Redis` configuration section — zero impact on existing consumers when `Enabled: false`
+- `[Cache(seconds, customKey?)]` attribute that works as both `IAsyncActionFilter` (MVC controllers) and `IEndpointFilter` (Minimal APIs) from a single class
+- `ICacheService` public interface with full key management: `GetAsync`, `SetAsync`, `GetKeysAsync`, `DeleteAsync`, `DeleteAllAsync`, and `DeleteCascadeAsync` for hierarchical key invalidation (e.g. `UserInfo:42` + all `UserInfo:42:*` descendants)
+- `RedisOptions` configuration class with `Enabled`, `PrefixKey`, `ConnectionString`, `DefaultTTL`, and `ShortCircuit` properties
+- Short-circuit protection: Redis operations exceeding `ShortCircuit` seconds are abandoned so a slow or unavailable Redis instance never degrades API response time
+- Startup validation for Redis options: `ConnectionString` required when enabled, `DefaultTTL` must be greater than 0, `ShortCircuit` must be non-negative
+- Startup log for Redis configuration (prefix key, TTL, short-circuit status)
+- `Microsoft.Extensions.Caching.StackExchangeRedis` added as a direct dependency
+
+### Fixed
+- All `ICacheService` methods now consistently prepend `PrefixKey` internally; callers always pass relative keys
+
 ## [1.3.0] - 2026-04-28
 
 ### Added
@@ -51,7 +66,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keycloak-ready configuration with full `appsettings.json` support
 - MIT license
 
-[Unreleased]: https://github.com/nemesis312/BoricuaCoder.API.CoreSetup/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/nemesis312/BoricuaCoder.API.CoreSetup/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/nemesis312/BoricuaCoder.API.CoreSetup/compare/v1.3.0...v1.4.0
+[1.3.0]: https://github.com/nemesis312/BoricuaCoder.API.CoreSetup/compare/v1.2.0...v1.3.0
+[1.2.0]: https://github.com/nemesis312/BoricuaCoder.API.CoreSetup/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/nemesis312/BoricuaCoder.API.CoreSetup/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/nemesis312/BoricuaCoder.API.CoreSetup/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/nemesis312/BoricuaCoder.API.CoreSetup/releases/tag/v1.0.0

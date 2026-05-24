@@ -11,8 +11,8 @@
         <Version>1.0.1</Version>
         <Authors>BoricuaCoder</Authors>
         <Company>BoricuaCoder</Company>
-        <Description>A lightweight library that simplifies ASP.NET Core API setup with pre-configured JWT Bearer authentication and Swagger/OpenAPI documentation with JWT security support. Configure everything via appsettings.json with just two lines of code.</Description>
-        <PackageTags>aspnetcore;jwt;swagger;openapi;authentication;api;setup;boricuacoder</PackageTags>
+        <Description>A lightweight library that simplifies ASP.NET Core API setup with pre-configured JWT Bearer authentication, Swagger/OpenAPI documentation with OAuth2 support, and optional Redis response caching. Configure everything via appsettings.json with just two lines of code.</Description>
+        <PackageTags>aspnetcore;jwt;swagger;openapi;authentication;redis;caching;api;setup;boricuacoder</PackageTags>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <PackageReadmeFile>README.md</PackageReadmeFile>
         <RepositoryType>git</RepositoryType>
