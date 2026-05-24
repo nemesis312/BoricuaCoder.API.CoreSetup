@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Abstractions;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Routing;
+using NSubstitute;
 
 namespace BoricuaCoder.API.CoreSetup.Tests.Caching;
 
@@ -161,7 +162,85 @@ public class CacheKeyGeneratorTests
         Assert.Equal("myapp::Unknown::Unknown", key);
     }
 
+    // ── Generate (EndpointFilterInvocationContext) ────────────────────────────
+
+    [Fact]
+    public void Generate_Endpoint_WithCustomKey_UsesCustomSegment()
+    {
+        var context = BuildEndpointContext(args: [42]);
+
+        var key = CacheKeyGenerator.Generate("UserInfo", context, "myapp::");
+
+        Assert.Equal("myapp::UserInfo:42", key);
+    }
+
+    [Fact]
+    public void Generate_Endpoint_NoCustomKey_UsesEndpointName()
+    {
+        var context = BuildEndpointContext(endpointName: "GetProducts", args: []);
+
+        var key = CacheKeyGenerator.Generate(null, context, "myapp::");
+
+        Assert.Equal("myapp::GetProducts", key);
+    }
+
+    [Fact]
+    public void Generate_Endpoint_NoEndpointName_FallsBackToRequestPath()
+    {
+        var context = BuildEndpointContext(path: "/products/list", args: []);
+
+        var key = CacheKeyGenerator.Generate(null, context, "myapp::");
+
+        Assert.Equal("myapp::products_list", key);
+    }
+
+    [Fact]
+    public void Generate_Endpoint_SkipsHttpContextArgs()
+    {
+        var httpContext = new DefaultHttpContext();
+        var context = BuildEndpointContext(endpointName: "GetUser", args: [httpContext, 99]);
+
+        var key = CacheKeyGenerator.Generate(null, context, "myapp::");
+
+        Assert.Equal("myapp::GetUser:99", key);
+    }
+
+    [Fact]
+    public void Generate_Endpoint_SkipsCancellationTokenArgs()
+    {
+        var context = BuildEndpointContext(endpointName: "List", args: [CancellationToken.None]);
+
+        var key = CacheKeyGenerator.Generate(null, context, "myapp::");
+
+        Assert.Equal("myapp::List", key);
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private static EndpointFilterInvocationContext BuildEndpointContext(
+        IEnumerable<object?>? args = null,
+        string? endpointName = null,
+        string? path = null)
+    {
+        var httpContext = new DefaultHttpContext();
+
+        if (endpointName is not null)
+        {
+            var endpoint = new Endpoint(
+                _ => Task.CompletedTask,
+                new EndpointMetadataCollection(new EndpointNameMetadata(endpointName)),
+                endpointName);
+            httpContext.SetEndpoint(endpoint);
+        }
+
+        if (path is not null)
+            httpContext.Request.Path = path;
+
+        var context = Substitute.For<EndpointFilterInvocationContext>();
+        context.HttpContext.Returns(httpContext);
+        context.Arguments.Returns(new List<object?>(args ?? []));
+        return context;
+    }
 
     private static ActionExecutingContext BuildMvcContext(
         string controller,
