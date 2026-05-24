@@ -14,4 +14,9 @@ public sealed class CoreSetupOptions
     /// Swagger/OpenAPI documentation configuration.
     /// </summary>
     public SwaggerOptions Swagger { get; init; } = new();
+
+    /// <summary>
+    /// Optional Redis caching configuration. Set <see cref="RedisOptions.Enabled"/> to true to activate.
+    /// </summary>
+    public RedisOptions Redis { get; init; } = new();
 }

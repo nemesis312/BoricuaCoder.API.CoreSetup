@@ -45,6 +45,18 @@ internal sealed class CoreSetupOptionsValidator : IValidateOptions<CoreSetupOpti
                 errors.Add("CoreSetup:Swagger:OAuth:AuthorizationUrl is required when TokenUrl is set.");
         }
 
+        if (options.Redis.Enabled)
+        {
+            if (string.IsNullOrEmpty(options.Redis.ConnectionString))
+                errors.Add("CoreSetup:Redis:ConnectionString is required when Redis is enabled.");
+
+            if (options.Redis.DefaultTTL <= 0)
+                errors.Add("CoreSetup:Redis:DefaultTTL must be greater than 0.");
+
+            if (options.Redis.ShortCircuit < 0)
+                errors.Add("CoreSetup:Redis:ShortCircuit must be 0 or greater.");
+        }
+
         return errors.Count > 0
             ? ValidateOptionsResult.Fail(errors)
             : ValidateOptionsResult.Success;
