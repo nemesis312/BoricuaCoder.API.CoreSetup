@@ -1,3 +1,4 @@
+using BoricuaCoder.API.CoreSetup.Caching;
 using BoricuaCoder.API.CoreSetup.Extensions;
 using BoricuaCoder.API.CoreSetup.Options;
 using Microsoft.AspNetCore.Authentication;
@@ -110,6 +111,62 @@ public class ServiceCollectionExtensionsTests
         Assert.True(options.Swagger.Enabled);
         Assert.Equal("API", options.Swagger.Title);
         Assert.Equal("v1", options.Swagger.Version);
+    }
+
+    // ── Redis ─────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void AddCoreSetup_BindsRedisOptionsFromConfiguration()
+    {
+        var services = new ServiceCollection();
+        var configuration = CreateConfiguration(new Dictionary<string, string?>
+        {
+            ["CoreSetup:Redis:Enabled"] = "false",
+            ["CoreSetup:Redis:PrefixKey"] = "myapp:api::",
+            ["CoreSetup:Redis:DefaultTTL"] = "120",
+            ["CoreSetup:Redis:ShortCircuit"] = "3"
+        });
+
+        services.AddCoreSetup(configuration);
+
+        var serviceProvider = services.BuildServiceProvider();
+        var options = serviceProvider.GetRequiredService<IOptions<CoreSetupOptions>>().Value;
+
+        Assert.False(options.Redis.Enabled);
+        Assert.Equal("myapp:api::", options.Redis.PrefixKey);
+        Assert.Equal(120, options.Redis.DefaultTTL);
+        Assert.Equal(3, options.Redis.ShortCircuit);
+    }
+
+    [Fact]
+    public void AddCoreSetup_RedisDisabled_DoesNotRegisterICacheService()
+    {
+        var services = new ServiceCollection();
+        var configuration = CreateConfiguration(new Dictionary<string, string?>
+        {
+            ["CoreSetup:Redis:Enabled"] = "false"
+        });
+
+        services.AddCoreSetup(configuration);
+
+        var serviceProvider = services.BuildServiceProvider();
+        var cacheService = serviceProvider.GetService<ICacheService>();
+
+        Assert.Null(cacheService);
+    }
+
+    [Fact]
+    public void AddCoreSetup_DefaultRedisSection_HasEnabledFalse()
+    {
+        var services = new ServiceCollection();
+        var configuration = CreateConfiguration();
+
+        services.AddCoreSetup(configuration);
+
+        var serviceProvider = services.BuildServiceProvider();
+        var options = serviceProvider.GetRequiredService<IOptions<CoreSetupOptions>>().Value;
+
+        Assert.False(options.Redis.Enabled);
     }
 
     private static IConfiguration CreateConfiguration(Dictionary<string, string?>? values = null)

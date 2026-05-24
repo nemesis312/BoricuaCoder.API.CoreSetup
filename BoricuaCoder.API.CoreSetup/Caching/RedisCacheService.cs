@@ -25,7 +25,7 @@ internal sealed class RedisCacheService : ICacheService
     {
         try
         {
-            var redisTask = _cache.GetStringAsync(key, ct);
+            var redisTask = _cache.GetStringAsync($"{_options.PrefixKey}{key}", ct);
             if (!await WaitWithShortCircuit(redisTask))
                 return default;
 
@@ -47,7 +47,7 @@ internal sealed class RedisCacheService : ICacheService
             {
                 AbsoluteExpirationRelativeToNow = ttl
             };
-            var redisTask = _cache.SetStringAsync(key, json, entryOptions, ct);
+            var redisTask = _cache.SetStringAsync($"{_options.PrefixKey}{key}", json, entryOptions, ct);
             await WaitWithShortCircuit(redisTask);
         }
         catch { /* swallow — cache failures must not break the app */ }

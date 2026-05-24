@@ -50,7 +50,7 @@ public sealed class CacheAttribute : Attribute, IAsyncActionFilter, IEndpointFil
 
         var redisOptions = context.HttpContext.RequestServices.GetService<RedisOptions>() ?? new RedisOptions();
         var ttl = Seconds > 0 ? Seconds : redisOptions.DefaultTTL;
-        var key = CacheKeyGenerator.Generate(CustomKey, context, redisOptions.PrefixKey);
+        var key = CacheKeyGenerator.Generate(CustomKey, context, "");
 
         var cached = await cacheService.GetAsync<string>(key);
         if (cached is not null)
@@ -84,7 +84,7 @@ public sealed class CacheAttribute : Attribute, IAsyncActionFilter, IEndpointFil
 
         var redisOptions = context.HttpContext.RequestServices.GetService<RedisOptions>() ?? new RedisOptions();
         var ttl = Seconds > 0 ? Seconds : redisOptions.DefaultTTL;
-        var key = CacheKeyGenerator.Generate(CustomKey, context, redisOptions.PrefixKey);
+        var key = CacheKeyGenerator.Generate(CustomKey, context, "");
 
         var cached = await cacheService.GetAsync<string>(key);
         if (cached is not null)

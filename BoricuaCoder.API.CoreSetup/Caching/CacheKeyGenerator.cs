@@ -58,10 +58,10 @@ internal static class CacheKeyGenerator
         return BuildKey(prefix, segment, args);
     }
 
-    private static string BuildArgsSegment(IEnumerable<string> parts)
+    internal static string BuildArgsSegment(IEnumerable<string> parts)
         => string.Join(":", parts.Where(p => !string.IsNullOrEmpty(p)));
 
-    private static string BuildKey(string prefix, string segment, string args)
+    internal static string BuildKey(string prefix, string segment, string args)
     {
         var key = string.IsNullOrEmpty(args)
             ? $"{prefix}{segment}"

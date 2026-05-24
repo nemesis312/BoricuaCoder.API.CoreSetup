@@ -189,6 +189,89 @@ public class CoreSetupOptionsValidatorTests
         Assert.True(result.Succeeded);
     }
 
+    // ── Redis validation ──────────────────────────────────────────────────────
+
+    [Fact]
+    public void Validate_RedisDisabled_NoValidationApplied()
+    {
+        var options = new CoreSetupOptions
+        {
+            Redis = new RedisOptions { Enabled = false, ConnectionString = string.Empty }
+        };
+
+        var result = Validate(options);
+
+        Assert.True(result.Succeeded);
+    }
+
+    [Fact]
+    public void Validate_RedisEnabled_WithConnectionString_Succeeds()
+    {
+        var options = new CoreSetupOptions
+        {
+            Redis = new RedisOptions { Enabled = true, ConnectionString = "localhost:6379" }
+        };
+
+        var result = Validate(options);
+
+        Assert.True(result.Succeeded);
+    }
+
+    [Fact]
+    public void Validate_RedisEnabled_EmptyConnectionString_FailsWithMessage()
+    {
+        var options = new CoreSetupOptions
+        {
+            Redis = new RedisOptions { Enabled = true, ConnectionString = string.Empty }
+        };
+
+        var result = Validate(options);
+
+        Assert.True(result.Failed);
+        Assert.Contains(result.Failures!, f => f.Contains("CoreSetup:Redis:ConnectionString"));
+    }
+
+    [Fact]
+    public void Validate_RedisEnabled_ZeroDefaultTTL_FailsWithMessage()
+    {
+        var options = new CoreSetupOptions
+        {
+            Redis = new RedisOptions { Enabled = true, ConnectionString = "localhost:6379", DefaultTTL = 0 }
+        };
+
+        var result = Validate(options);
+
+        Assert.True(result.Failed);
+        Assert.Contains(result.Failures!, f => f.Contains("CoreSetup:Redis:DefaultTTL"));
+    }
+
+    [Fact]
+    public void Validate_RedisEnabled_NegativeShortCircuit_FailsWithMessage()
+    {
+        var options = new CoreSetupOptions
+        {
+            Redis = new RedisOptions { Enabled = true, ConnectionString = "localhost:6379", ShortCircuit = -1 }
+        };
+
+        var result = Validate(options);
+
+        Assert.True(result.Failed);
+        Assert.Contains(result.Failures!, f => f.Contains("CoreSetup:Redis:ShortCircuit"));
+    }
+
+    [Fact]
+    public void Validate_RedisEnabled_ZeroShortCircuit_Succeeds()
+    {
+        var options = new CoreSetupOptions
+        {
+            Redis = new RedisOptions { Enabled = true, ConnectionString = "localhost:6379", ShortCircuit = 0 }
+        };
+
+        var result = Validate(options);
+
+        Assert.True(result.Succeeded);
+    }
+
     [Fact]
     public void Validate_MultipleErrors_ReturnsAllFailures()
     {
