@@ -318,6 +318,35 @@ When `ShortCircuit` is set (e.g. `2` seconds), any Redis operation that takes lo
 }
 ```
 
+### JSON serialization
+
+`[Cache]` reads the application's `JsonSerializerOptions` from DI before serializing responses to Redis. This means cached responses always use the same casing, converters, and policies as non-cached responses.
+
+**Default behavior (no options configured):** `JsonSerializerOptions.Default` is used — System.Text.Json defaults apply, which means **PascalCase**.
+
+**MVC — configure via `AddJsonOptions`:**
+
+```csharp
+builder.Services.AddControllers()
+    .AddJsonOptions(o =>
+    {
+        o.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+        o.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
+    });
+```
+
+**Minimal API — configure via `ConfigureHttpJsonOptions`:**
+
+```csharp
+builder.Services.ConfigureHttpJsonOptions(o =>
+{
+    o.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+    o.SerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
+});
+```
+
+Any converter or policy registered this way is automatically applied to both cache misses and cache hits — no extra configuration is needed.
+
 ---
 
 ## Keycloak Configuration
