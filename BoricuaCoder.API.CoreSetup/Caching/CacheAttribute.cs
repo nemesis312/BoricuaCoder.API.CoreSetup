@@ -1,8 +1,10 @@
+using System.Text.Json;
 using BoricuaCoder.API.CoreSetup.Options;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace BoricuaCoder.API.CoreSetup.Caching;
 
@@ -68,7 +70,10 @@ public sealed class CacheAttribute : Attribute, IAsyncActionFilter, IEndpointFil
 
         if (executed.Result is OkObjectResult { Value: not null } okResult)
         {
-            var json = System.Text.Json.JsonSerializer.Serialize(okResult.Value);
+            var mvcJsonOptions = context.HttpContext.RequestServices
+                .GetService<IOptions<Microsoft.AspNetCore.Mvc.JsonOptions>>();
+            var serializerOptions = mvcJsonOptions?.Value?.JsonSerializerOptions ?? JsonSerializerOptions.Default;
+            var json = JsonSerializer.Serialize(okResult.Value, serializerOptions);
             await cacheService.SetAsync(key, json, TimeSpan.FromSeconds(ttl));
         }
     }
@@ -98,7 +103,10 @@ public sealed class CacheAttribute : Attribute, IAsyncActionFilter, IEndpointFil
             var valueToCache = result is IValueHttpResult valueResult ? valueResult.Value : result;
             if (valueToCache is not null)
             {
-                var json = System.Text.Json.JsonSerializer.Serialize(valueToCache);
+                var httpJsonOptions = context.HttpContext.RequestServices
+                    .GetService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>();
+                var serializerOptions = httpJsonOptions?.Value?.SerializerOptions ?? JsonSerializerOptions.Default;
+                var json = JsonSerializer.Serialize(valueToCache, serializerOptions);
                 await cacheService.SetAsync(key, json, TimeSpan.FromSeconds(ttl));
             }
         }

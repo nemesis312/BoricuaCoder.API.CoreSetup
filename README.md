@@ -14,7 +14,7 @@ This package eliminates boilerplate code when setting up new ASP.NET Core APIs. 
 
 - **JWT Bearer Authentication** - Pre-configured with Authority, Audience, and HTTPS metadata settings
 - **Swagger/OpenAPI with OAuth2** - Auto-configured with Authorization Code flow + PKCE
-- **Redis Response Caching** - Optional `[Cache]` attribute/endpoint filter with auto key generation, custom keys, TTL fallback, short-circuit protection, and cascade invalidation
+- **Redis Response Caching** - Optional `[Cache]` attribute/endpoint filter with auto key generation, custom keys, TTL fallback, short-circuit protection, cascade invalidation, and full respect for the app's `JsonSerializerOptions` (camelCase, custom converters, etc.)
 - **Keycloak Ready** - Works out of the box with Keycloak or any OIDC provider
 - **Configuration-driven** - All settings via `appsettings.json`
 - **Minimal API friendly** - Works with both Minimal APIs and Controller-based APIs
@@ -566,6 +566,20 @@ Your Keycloak URLs follow this pattern:
 1. `Redis.Enabled` is `false` — `ICacheService` is not registered, so `[Cache]` silently passes through.
 2. For Minimal APIs, the attribute must be chained with `.AddEndpointFilter(new CacheAttribute(...))`. Using it as a plain `[Cache]` attribute on a lambda has no effect.
 3. The handler returns a non-`200 OK` result — only successful responses are cached.
+
+---
+
+### Cached responses use PascalCase instead of camelCase
+
+**Symptoms:** The first request returns correctly cased JSON (e.g., `{ "userId": 1 }`), but subsequent requests served from the Redis cache return PascalCase (e.g., `{ "UserId": 1 }`).
+
+**Cause:** This was a bug in versions prior to v1.4.2. The `[Cache]` attribute serialized responses without reading the application's `JsonSerializerOptions`, always producing PascalCase (System.Text.Json default).
+
+**Fix:** Upgrade to `v1.4.2` or later. The `[Cache]` attribute now reads the configured options from DI automatically:
+- **MVC:** reads `IOptions<Microsoft.AspNetCore.Mvc.JsonOptions>` (configured via `AddControllers().AddJsonOptions(...)`)
+- **Minimal API:** reads `IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>` (configured via `ConfigureHttpJsonOptions(...)`)
+
+No configuration changes are required after upgrading.
 
 ---
 

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-06-05
+
+### Fixed
+- `[Cache]` attribute now respects the application's `JsonSerializerOptions` when serializing responses to Redis. Previously, all cached responses were serialized with System.Text.Json defaults (PascalCase), ignoring any `AddJsonOptions()`/`ConfigureHttpJsonOptions()` configuration. Cache hits now produce the same JSON casing and converters as cache misses.
+- `RedisCacheService` now uses the configured HTTP JSON options when serializing/deserializing values in `SetAsync<T>` and `GetAsync<T>` direct calls.
+
 ## [1.4.0] - 2026-05-23
 
 ### Added
@@ -66,7 +72,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keycloak-ready configuration with full `appsettings.json` support
 - MIT license
 
-[Unreleased]: https://github.com/nemesis312/BoricuaCoder.API.CoreSetup/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/nemesis312/BoricuaCoder.API.CoreSetup/compare/v1.4.2...HEAD
+[1.4.2]: https://github.com/nemesis312/BoricuaCoder.API.CoreSetup/compare/v1.4.0...v1.4.2
 [1.4.0]: https://github.com/nemesis312/BoricuaCoder.API.CoreSetup/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/nemesis312/BoricuaCoder.API.CoreSetup/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/nemesis312/BoricuaCoder.API.CoreSetup/compare/v1.1.0...v1.2.0

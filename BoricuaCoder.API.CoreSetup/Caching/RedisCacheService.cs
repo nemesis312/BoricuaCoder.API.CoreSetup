@@ -1,6 +1,7 @@
 using System.Text.Json;
 using BoricuaCoder.API.CoreSetup.Options;
 using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Options;
 using StackExchange.Redis;
 
 namespace BoricuaCoder.API.CoreSetup.Caching;
@@ -10,15 +11,18 @@ internal sealed class RedisCacheService : ICacheService
     private readonly IDistributedCache _cache;
     private readonly IConnectionMultiplexer _multiplexer;
     private readonly RedisOptions _options;
+    private readonly JsonSerializerOptions _serializerOptions;
 
     public RedisCacheService(
         IDistributedCache cache,
         IConnectionMultiplexer multiplexer,
-        RedisOptions options)
+        RedisOptions options,
+        IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>? jsonOptions = null)
     {
         _cache = cache;
         _multiplexer = multiplexer;
         _options = options;
+        _serializerOptions = jsonOptions?.Value?.SerializerOptions ?? JsonSerializerOptions.Default;
     }
 
     public async Task<T?> GetAsync<T>(string key, CancellationToken ct = default)
@@ -30,7 +34,7 @@ internal sealed class RedisCacheService : ICacheService
                 return default;
 
             var json = redisTask.Result;
-            return json is null ? default : JsonSerializer.Deserialize<T>(json);
+            return json is null ? default : JsonSerializer.Deserialize<T>(json, _serializerOptions);
         }
         catch
         {
@@ -42,7 +46,7 @@ internal sealed class RedisCacheService : ICacheService
     {
         try
         {
-            var json = JsonSerializer.Serialize(value);
+            var json = JsonSerializer.Serialize(value, _serializerOptions);
             var entryOptions = new DistributedCacheEntryOptions
             {
                 AbsoluteExpirationRelativeToNow = ttl
