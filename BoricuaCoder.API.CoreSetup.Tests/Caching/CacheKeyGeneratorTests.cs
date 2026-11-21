@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Security.Claims;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -6,6 +7,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Abstractions;
 using Microsoft.AspNetCore.Mvc.Filters;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.Routing.Patterns;
 using Microsoft.Extensions.DependencyInjection;
@@ -246,6 +248,147 @@ public class CacheKeyGeneratorTests
         Assert.Matches(new Regex("^Search:%h[0-9a-f]{64}:u-abc$"), key);
     }
 
+    // ── Fix round 1: service detection, empty strings, length ────────────────
+
+    [Fact]
+    public void EncodeArg_EmptyString_IsReservedToken() => Assert.Equal("%e", CacheKeyGenerator.EncodeArg("", Json));
+
+    [Fact]
+    public void Generate_EmptyArgWithUserSegment_DiffersFromForgedUserArg()
+    {
+        var victim = CacheKeyGenerator.Generate(null, BuildEndpointContext(endpointName: "search", args: [""]), "u-X");
+        var forged = CacheKeyGenerator.Generate(null, BuildEndpointContext(endpointName: "search", args: ["u-X"]), null);
+
+        Assert.Equal("search:%e:u-X", victim);
+        Assert.NotEqual(victim, forged);
+    }
+
+    [Fact]
+    public void Generate_Mvc_EnumerableParam_IsPartOfKey()
+    {
+        var provider = BuildProviderWithFakeService();
+        var one = BuildMvcContext("Orders", "ByIds",
+            [Param("ids", typeof(IEnumerable<int>))], new() { ["ids"] = new[] { 1 } }, provider);
+        var two = BuildMvcContext("Orders", "ByIds",
+            [Param("ids", typeof(IEnumerable<int>))], new() { ["ids"] = new[] { 2 } }, provider);
+
+        var k1 = CacheKeyGenerator.Generate(null, one, null);
+        var k2 = CacheKeyGenerator.Generate(null, two, null);
+
+        Assert.NotEqual(k1, k2);
+        Assert.Matches("^Orders::ByIds:%h[0-9a-f]{32}$", k1!);
+    }
+
+    [Fact]
+    public void Generate_Mvc_FromServicesParam_IsExcluded()
+    {
+        // Node is not registered in DI: only the [FromServices] binding source marks it as a service.
+        var context = BuildMvcContext("Users", "Get",
+            [
+                Param("svc", typeof(Node), new BindingInfo { BindingSource = BindingSource.Services }),
+                Param("id", typeof(int))
+            ],
+            new() { ["svc"] = new Node(), ["id"] = 5 },
+            BuildProviderWithFakeService());
+
+        Assert.Equal("Users::Get:5", CacheKeyGenerator.Generate(null, context, null));
+    }
+
+    [Fact]
+    public void Generate_Mvc_RegisteredInterfaceParam_IsExcluded()
+    {
+        var context = BuildMvcContext("Users", "Get",
+            [Param("svc", typeof(IFakeService)), Param("id", typeof(int))],
+            new() { ["svc"] = new FakeService(), ["id"] = 5 },
+            BuildProviderWithFakeService());
+
+        Assert.Equal("Users::Get:5", CacheKeyGenerator.Generate(null, context, null));
+    }
+
+    [Fact]
+    public void Generate_Endpoint_InjectedInterface_ExcludedUsingHandlerSignature()
+    {
+        // Only IFakeService is registered; the runtime type FakeService is not, so the declared
+        // handler parameter type is what identifies the argument as a service.
+        var httpContext = new DefaultHttpContext { RequestServices = BuildProviderWithFakeService(isConcreteRegistered: false) };
+        var context = BuildEndpointContext(
+            endpointName: "GetUser",
+            args: [new FakeService(), 5],
+            httpContext: httpContext,
+            metadata: [HandlerMethod(nameof(HandlerWithService))]);
+
+        Assert.Equal("GetUser:5", CacheKeyGenerator.Generate(null, context, null));
+    }
+
+    [Fact]
+    public void Generate_Endpoint_CollectionArgs_AreIncluded()
+    {
+        var provider = BuildProviderWithFakeService();
+        EndpointFilterInvocationContext Build(int a, int b) => BuildEndpointContext(
+            endpointName: "ByIds",
+            args: [new[] { a }, new List<int> { b }],
+            httpContext: new DefaultHttpContext { RequestServices = provider },
+            metadata: [HandlerMethod(nameof(HandlerWithCollections))]);
+
+        var k1 = CacheKeyGenerator.Generate(null, Build(1, 2), null);
+        var k2 = CacheKeyGenerator.Generate(null, Build(1, 3), null);
+
+        Assert.Matches("^ByIds:%h[0-9a-f]{32}:%h[0-9a-f]{32}$", k1!);
+        Assert.NotEqual(k1, k2);
+    }
+
+    [Fact]
+    public void Generate_Endpoint_CollectionArgs_IncludedWithoutHandlerSignature()
+    {
+        var httpContext = new DefaultHttpContext { RequestServices = BuildProviderWithFakeService() };
+        var context = BuildEndpointContext(endpointName: "ByIds", args: [new List<int> { 1 }], httpContext: httpContext);
+
+        Assert.Matches("^ByIds:%h[0-9a-f]{32}$", CacheKeyGenerator.Generate(null, context, null)!);
+    }
+
+    [Fact]
+    public void Generate_LongEndpointId_IsHashedAfterArgs()
+    {
+        var context = BuildEndpointContext(endpointName: new string('e', 600), args: [42]);
+
+        var key = CacheKeyGenerator.Generate("UserInfo", context, "u-abc");
+
+        Assert.NotNull(key);
+        Assert.True(key.Length <= 512);
+        Assert.Matches("^UserInfo:%h[0-9a-f]{64}:%h[0-9a-f]{64}:u-abc$", key);
+    }
+
+    [Fact]
+    public void Generate_LongCustomKey_IsHashedWhenStillTooLong()
+    {
+        var context = BuildEndpointContext(endpointName: "GetUser", args: [42]);
+
+        var key = CacheKeyGenerator.Generate(new string('c', 600), context, "u-abc");
+
+        Assert.NotNull(key);
+        Assert.True(key.Length <= 512);
+        Assert.Matches("^%h[0-9a-f]{64}:%h[0-9a-f]{64}:GetUser:u-abc$", key);
+    }
+
+    private static void HandlerWithService(IFakeService svc, int id) { }
+
+    private static void HandlerWithCollections(int[] a, IEnumerable<int> b) { }
+
+    private static MethodInfo HandlerMethod(string name)
+        => typeof(CacheKeyGeneratorTests).GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static)!;
+
+    private static ServiceProvider BuildProviderWithFakeService(bool isConcreteRegistered = false)
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<IFakeService, FakeService>();
+        if (isConcreteRegistered)
+            services.AddSingleton<FakeService>();
+        return services.BuildServiceProvider();
+    }
+
+    private static ParameterDescriptor Param(string name, Type type, BindingInfo? bindingInfo = null)
+        => new() { Name = name, ParameterType = type, BindingInfo = bindingInfo };
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static EndpointFilterInvocationContext BuildEndpointContext(
@@ -253,7 +396,8 @@ public class CacheKeyGeneratorTests
         string? endpointName = null,
         string? routePattern = null,
         string? path = null,
-        HttpContext? httpContext = null)
+        HttpContext? httpContext = null,
+        object[]? metadata = null)
     {
         httpContext ??= new DefaultHttpContext();
 
@@ -261,7 +405,7 @@ public class CacheKeyGeneratorTests
         {
             httpContext.SetEndpoint(new Endpoint(
                 _ => Task.CompletedTask,
-                new EndpointMetadataCollection(new EndpointNameMetadata(endpointName)),
+                new EndpointMetadataCollection([new EndpointNameMetadata(endpointName), .. metadata ?? []]),
                 endpointName));
         }
         else if (routePattern is not null)
@@ -307,5 +451,21 @@ public class CacheKeyGeneratorTests
         var actionArgs = args.ToDictionary(a => a.Name, a => a.Value);
         var actionContext = new ActionContext(httpContext, routeData, descriptor);
         return new ActionExecutingContext(actionContext, new List<IFilterMetadata>(), actionArgs, new object());
+    }
+
+    private static ActionExecutingContext BuildMvcContext(
+        string controller,
+        string action,
+        ParameterDescriptor[] parameters,
+        Dictionary<string, object?> args,
+        IServiceProvider services)
+    {
+        var httpContext = new DefaultHttpContext { RequestServices = services };
+        httpContext.Request.RouteValues["controller"] = controller;
+        httpContext.Request.RouteValues["action"] = action;
+        var routeData = new RouteData(httpContext.Request.RouteValues);
+        var descriptor = new ActionDescriptor { Parameters = parameters.ToList() };
+        var actionContext = new ActionContext(httpContext, routeData, descriptor);
+        return new ActionExecutingContext(actionContext, new List<IFilterMetadata>(), args, new object());
     }
 }

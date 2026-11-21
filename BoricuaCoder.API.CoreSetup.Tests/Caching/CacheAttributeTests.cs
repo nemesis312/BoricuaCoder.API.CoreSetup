@@ -210,11 +210,62 @@ public class CacheAttributeTests
             .SetAsync(Arg.Any<string>(), Arg.Any<string>(), TimeSpan.FromSeconds(90));
     }
 
+    // ── Unencodable arguments ─────────────────────────────────────────────────
+
+    private sealed class Node
+    {
+        public Node? Next { get; set; }
+    }
+
+    private static Node SelfReferencingNode()
+    {
+        var node = new Node();
+        node.Next = node;
+        return node;
+    }
+
+    [Fact]
+    public async Task OnActionExecutionAsync_UnencodableArgument_CallsNextWithoutTouchingCache()
+    {
+        var cacheService = Substitute.For<ICacheService>();
+        var context = BuildMvcContext(cacheService, args: [("filter", SelfReferencingNode())]);
+        var nextCalled = false;
+        var attribute = new CacheAttribute(60);
+
+        await attribute.OnActionExecutionAsync(context, () =>
+        {
+            nextCalled = true;
+            return Task.FromResult(new ActionExecutedContext(context, [], new object()) { Result = new OkObjectResult("data") });
+        });
+
+        Assert.True(nextCalled);
+        Assert.Empty(cacheService.ReceivedCalls());
+    }
+
+    [Fact]
+    public async Task InvokeAsync_UnencodableArgument_CallsNextWithoutTouchingCache()
+    {
+        var cacheService = Substitute.For<ICacheService>();
+        var context = BuildEndpointContext(cacheService, args: [SelfReferencingNode()]);
+        var nextCalled = false;
+        var attribute = new CacheAttribute(60);
+
+        await attribute.InvokeAsync(context, _ =>
+        {
+            nextCalled = true;
+            return ValueTask.FromResult<object?>(Results.Ok("data"));
+        });
+
+        Assert.True(nextCalled);
+        Assert.Empty(cacheService.ReceivedCalls());
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static ActionExecutingContext BuildMvcContext(
         ICacheService? cacheService,
-        RedisOptions? redisOptions = null)
+        RedisOptions? redisOptions = null,
+        (string Name, object? Value)[]? args = null)
     {
         var services = new ServiceCollection();
         if (cacheService is not null)
@@ -228,13 +279,21 @@ public class CacheAttributeTests
         httpContext.Request.RouteValues["controller"] = "Products";
         httpContext.Request.RouteValues["action"] = "GetAll";
         var routeData = new RouteData(httpContext.Request.RouteValues);
-        var actionContext = new ActionContext(httpContext, routeData, new ActionDescriptor());
-        return new ActionExecutingContext(actionContext, new List<IFilterMetadata>(), new Dictionary<string, object?>(), new object());
+        args ??= [];
+        var descriptor = new ActionDescriptor
+        {
+            Parameters = args
+                .Select(a => new ParameterDescriptor { Name = a.Name, ParameterType = a.Value?.GetType() ?? typeof(object) })
+                .ToList()
+        };
+        var actionContext = new ActionContext(httpContext, routeData, descriptor);
+        return new ActionExecutingContext(actionContext, new List<IFilterMetadata>(), args.ToDictionary(a => a.Name, a => a.Value), new object());
     }
 
     private static EndpointFilterInvocationContext BuildEndpointContext(
         ICacheService? cacheService,
-        RedisOptions? redisOptions = null)
+        RedisOptions? redisOptions = null,
+        object?[]? args = null)
     {
         var services = new ServiceCollection();
         if (cacheService is not null)
@@ -248,7 +307,7 @@ public class CacheAttributeTests
 
         var efContext = Substitute.For<EndpointFilterInvocationContext>();
         efContext.HttpContext.Returns(httpContext);
-        efContext.Arguments.Returns(new List<object?>());
+        efContext.Arguments.Returns(new List<object?>(args ?? []));
         return efContext;
     }
 

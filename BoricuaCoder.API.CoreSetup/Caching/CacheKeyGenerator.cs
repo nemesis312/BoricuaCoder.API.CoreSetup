@@ -1,10 +1,16 @@
+using System.Collections;
 using System.Globalization;
+using System.Reflection;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Metadata;
+using Microsoft.AspNetCore.Mvc.Abstractions;
 using Microsoft.AspNetCore.Mvc.Filters;
+using Microsoft.AspNetCore.Mvc.Infrastructure;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -22,6 +28,7 @@ internal static class CacheKeyGenerator
     private const int MaxKeyLength = 512;
     private const int MaxInlineStringLength = 64;
     private const string NullToken = "%";
+    private const string EmptyToken = "%e";
     private const string HashMarker = "%h";
 
     /// <summary>Builds a cache key from an MVC action filter context. Returns null when an argument cannot be encoded.</summary>
@@ -41,7 +48,8 @@ internal static class CacheKeyGenerator
         {
             context.ActionArguments.TryGetValue(parameter.Name, out var value);
 
-            if (IsSkippedType(parameter.ParameterType, isService) || IsSkippedValue(value, isService))
+            if (IsFrameworkType(parameter.ParameterType) || IsFrameworkValue(value)
+                || IsMvcServiceParameter(parameter, isService))
                 continue;
 
             var token = EncodeArg(value, json);
@@ -57,6 +65,7 @@ internal static class CacheKeyGenerator
     internal static string? Generate(string? customKey, EndpointFilterInvocationContext context, string? userSegment)
     {
         var httpContext = context.HttpContext;
+        var endpoint = httpContext.GetEndpoint();
         var endpointId = Uri.EscapeDataString(ResolveEndpointId(httpContext));
 
         var services = httpContext.RequestServices;
@@ -64,11 +73,32 @@ internal static class CacheKeyGenerator
         var json = services?.GetService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()?.Value?.SerializerOptions
                    ?? JsonSerializerOptions.Default;
 
+        // Declared handler parameters line up by position with the filter arguments. Without them
+        // (no MethodInfo, or a count mismatch) fall back to the runtime type of each value.
+        var arguments = context.Arguments;
+        var declared = endpoint?.Metadata.GetMetadata<MethodInfo>()?.GetParameters();
+        if (declared is not null && declared.Length != arguments.Count)
+            declared = null;
+
         var tokens = new List<string>();
-        foreach (var value in context.Arguments)
+        for (var i = 0; i < arguments.Count; i++)
         {
-            if (IsSkippedValue(value, isService))
+            var value = arguments[i];
+            if (IsFrameworkValue(value))
                 continue;
+
+            if (declared is not null)
+            {
+                var parameter = declared[i];
+                if (IsFrameworkType(parameter.ParameterType)
+                    || HasServiceAttribute(parameter)
+                    || IsInjectableService(parameter.ParameterType, isService))
+                    continue;
+            }
+            else if (value is not null && IsInjectableService(value.GetType(), isService))
+            {
+                continue;
+            }
 
             var token = EncodeArg(value, json);
             if (token is null)
@@ -80,7 +110,7 @@ internal static class CacheKeyGenerator
     }
 
     /// <summary>
-    /// Encodes one argument as a key-safe token. <c>%</c> is null, <c>%h…</c> is a hash; every other
+    /// Encodes one argument as a key-safe token. <c>%</c> is null, <c>%e</c> is an empty string, <c>%h…</c> is a hash; every other
     /// token is percent-escaped, so neither can be produced by a literal value. Returns null when the
     /// value cannot be serialized.
     /// </summary>
@@ -90,6 +120,8 @@ internal static class CacheKeyGenerator
         {
             case null:
                 return NullToken;
+            case string { Length: 0 }:
+                return EmptyToken;
             case string s:
                 return s.Length <= MaxInlineStringLength
                     ? Uri.EscapeDataString(s)
@@ -139,15 +171,34 @@ internal static class CacheKeyGenerator
 
     private static string Compose(string? customKey, string endpointId, List<string> tokens, string? userSegment)
     {
-        var args = string.Join(":", tokens);
-        var key = Join(customKey, endpointId, tokens.Count > 0 ? args : null, userSegment);
-
+        // The args part is never omitted when there is at least one token: every token is non-empty
+        // (empty strings encode as %e), so a user segment can never be forged through an argument.
+        var args = tokens.Count > 0 ? string.Join(":", tokens) : null;
+        var key = Join(customKey, endpointId, args, userSegment);
         if (key.Length <= MaxKeyLength)
             return key;
 
-        var hashedArgs = HashMarker + Sha256Hex(Encoding.UTF8.GetBytes(args));
-        return Join(customKey, endpointId, hashedArgs, userSegment);
+        if (args is not null)
+        {
+            args = HashMarker + Sha256Hex(Encoding.UTF8.GetBytes(args));
+            key = Join(customKey, endpointId, args, userSegment);
+            if (key.Length <= MaxKeyLength)
+                return key;
+        }
+
+        // Still too long: hash the endpoint id first so a custom key stays usable for cascade deletes.
+        endpointId = HashIfLong(endpointId);
+        key = Join(customKey, endpointId, args, userSegment);
+        if (key.Length <= MaxKeyLength || string.IsNullOrEmpty(customKey))
+            return key;
+
+        return Join(HashIfLong(customKey), endpointId, args, userSegment);
     }
+
+    private static string HashIfLong(string value)
+        => value.Length <= HashMarker.Length + 64
+            ? value
+            : HashMarker + Sha256Hex(Encoding.UTF8.GetBytes(value));
 
     private static string Join(string? customKey, string endpointId, string? args, string? userSegment)
     {
@@ -158,23 +209,44 @@ internal static class CacheKeyGenerator
         return string.Join(":", parts.Where(p => !string.IsNullOrEmpty(p)));
     }
 
-    private static bool IsSkippedValue(object? value, IServiceProviderIsService? isService)
-        => value is not null && IsSkippedType(value.GetType(), isService);
+    private static bool IsFrameworkValue(object? value)
+        => value is not null && IsFrameworkType(value.GetType());
 
-    private static bool IsSkippedType(Type type, IServiceProviderIsService? isService)
+    private static bool IsFrameworkType(Type type)
+        => type == typeof(CancellationToken)
+           || typeof(HttpContext).IsAssignableFrom(type)
+           || typeof(HttpRequest).IsAssignableFrom(type)
+           || typeof(HttpResponse).IsAssignableFrom(type)
+           || typeof(ClaimsPrincipal).IsAssignableFrom(type);
+
+    private static bool IsMvcServiceParameter(ParameterDescriptor parameter, IServiceProviderIsService? isService)
     {
-        if (type == typeof(CancellationToken)
-            || typeof(HttpContext).IsAssignableFrom(type)
-            || typeof(HttpRequest).IsAssignableFrom(type)
-            || typeof(HttpResponse).IsAssignableFrom(type)
-            || typeof(ClaimsPrincipal).IsAssignableFrom(type))
+        if (parameter.BindingInfo?.BindingSource == BindingSource.Services)
             return true;
 
-        // Value types and strings are request data, never injected services.
-        if (type.IsValueType || type == typeof(string) || type == typeof(object))
+        if (parameter is IParameterInfoParameterDescriptor { ParameterInfo: { } info } && HasServiceAttribute(info))
+            return true;
+
+        return IsInjectableService(parameter.ParameterType, isService);
+    }
+
+    private static bool HasServiceAttribute(ParameterInfo parameter)
+        => parameter.IsDefined(typeof(FromKeyedServicesAttribute), inherit: true)
+           || parameter.GetCustomAttributes(inherit: true).OfType<IFromServiceMetadata>().Any();
+
+    /// <summary>
+    /// True when DI can resolve the type and it is not request data. MS DI reports every closed
+    /// <c>IEnumerable&lt;T&gt;</c> as a service, so collections never count as services here.
+    /// </summary>
+    private static bool IsInjectableService(Type type, IServiceProviderIsService? isService)
+    {
+        if (isService is null || type.IsValueType || type == typeof(string) || type == typeof(object))
             return false;
 
-        return isService?.IsService(type) == true;
+        if (typeof(IEnumerable).IsAssignableFrom(type))
+            return false;
+
+        return isService.IsService(type);
     }
 
     private static string Sha256Hex(byte[] bytes)
