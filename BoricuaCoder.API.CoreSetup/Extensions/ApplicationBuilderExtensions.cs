@@ -2,6 +2,7 @@ using BoricuaCoder.API.CoreSetup.Caching;
 using BoricuaCoder.API.CoreSetup.Options;
 using BoricuaCoder.API.CoreSetup.Setup;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -38,14 +39,23 @@ public static class ApplicationBuilderExtensions
         {
             LogSwaggerConfiguration(logger, options.Swagger);
 
-            app.UseSwagger();
+            if (!app.Environment.IsDevelopment())
+                logger.LogWarning(
+                    "CoreSetup: Swagger UI is enabled in the '{Environment}' environment and exposes the full API surface. It will be disabled by default outside Development in 2.0.0. Set CoreSetup:Swagger:Enabled explicitly.",
+                    app.Environment.EnvironmentName);
+
+            var routePrefix = options.Swagger.RoutePrefix;
+            var version = options.Swagger.Version;
+
+            app.UseSwagger(c =>
+                c.RouteTemplate = BuildSwaggerJsonPath(routePrefix, "{documentName}").TrimStart('/'));
 
             app.UseSwaggerUI(c =>
             {
-                c.RoutePrefix = options.Swagger.RoutePrefix;
+                c.RoutePrefix = routePrefix;
                 c.SwaggerEndpoint(
-                    $"/{options.Swagger.RoutePrefix}/{options.Swagger.Version}/swagger.json",
-                    $"{options.Swagger.Title} {options.Swagger.Version}"
+                    BuildSwaggerJsonPath(routePrefix, version),
+                    $"{options.Swagger.Title} {version}"
                 );
 
                 c.DisplayRequestDuration();
@@ -62,6 +72,14 @@ public static class ApplicationBuilderExtensions
         app.UseAuthorization();
 
         return app;
+    }
+
+    internal static string BuildSwaggerJsonPath(string routePrefix, string version)
+    {
+        var prefix = routePrefix?.Trim('/');
+        return string.IsNullOrWhiteSpace(prefix)
+            ? $"/{version}/swagger.json"
+            : $"/{prefix}/{version}/swagger.json";
     }
 
     private static void LogJwtConfiguration(ILogger logger, JwtOptions jwt)

@@ -69,6 +69,33 @@ public class LoggingIntegrationTests : IAsyncLifetime
         Assert.Single(oauthLogs);
     }
 
+    private const string SwaggerProductionWarning =
+        "CoreSetup: Swagger UI is enabled in the 'Production' environment and exposes the full API surface. It will be disabled by default outside Development in 2.0.0. Set CoreSetup:Swagger:Enabled explicitly.";
+
+    [Fact]
+    public void UseCoreSetup_SwaggerInProduction_LogsWarning()
+    {
+        using var app = IntegrationTestBase.BuildAppWithTestLogging(
+            out var collector, environmentName: "Production");
+
+        var warnings = collector.GetSnapshot()
+            .Where(r => r.Category == CoreSetupExtensions.LogCategory && r.Level == LogLevel.Warning)
+            .Select(r => r.Message)
+            .ToList();
+
+        Assert.Single(warnings, m => m == SwaggerProductionWarning);
+    }
+
+    [Fact]
+    public void UseCoreSetup_SwaggerInDevelopment_NoProductionWarning()
+    {
+        var warnings = _collector.GetSnapshot()
+            .Where(r => r.Category == CoreSetupExtensions.LogCategory && r.Level == LogLevel.Warning)
+            .Select(r => r.Message);
+
+        Assert.DoesNotContain(warnings, m => m.Contains("Swagger UI is enabled in"));
+    }
+
     // ── Redis startup warnings (connection is lazy, so no server is needed) ──
 
     private const string EmptyPrefixWarning =
