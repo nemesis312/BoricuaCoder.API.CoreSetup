@@ -7,6 +7,11 @@ namespace BoricuaCoder.API.CoreSetup.Setup;
 
 internal static class RedisSetup
 {
+    /// <summary>
+    /// DI key for the multiplexer CoreSetup owns, so it never collides with one the host app registers.
+    /// </summary>
+    internal const string MultiplexerServiceKey = "BoricuaCoder.API.CoreSetup.Redis";
+
     internal static IServiceCollection AddRedisCache(
         this IServiceCollection services,
         RedisOptions options)
@@ -16,6 +21,7 @@ internal static class RedisSetup
         // Register the multiplexer as a singleton so both the distributed cache
         // and RedisCacheService share the same connection pool.
         services.AddSingleton<IConnectionMultiplexer>(multiplexer);
+        services.AddKeyedSingleton<IConnectionMultiplexer>(MultiplexerServiceKey, multiplexer);
 
         services.AddStackExchangeRedisCache(o =>
         {
