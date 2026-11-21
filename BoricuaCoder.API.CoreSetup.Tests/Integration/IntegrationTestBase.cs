@@ -25,9 +25,12 @@ internal static class IntegrationTestBase
         ["CoreSetup:Swagger:OAuth:ClientId"] = "test-client"
     };
 
-    internal static WebApplication BuildApp(Dictionary<string, string?>? config = null)
+    // CreateBuilder() defaults to Production; pin Development so warning assertions are deterministic.
+    internal static WebApplication BuildApp(
+        Dictionary<string, string?>? config = null,
+        string environmentName = "Development")
     {
-        var builder = WebApplication.CreateBuilder();
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = environmentName });
         builder.WebHost.UseTestServer();
         builder.Configuration.AddInMemoryCollection(config ?? DefaultConfig);
         builder.Services.AddCoreSetup(builder.Configuration);
@@ -41,12 +44,13 @@ internal static class IntegrationTestBase
 
     internal static WebApplication BuildAppWithTestLogging(
         out TestLogCollector collector,
-        Dictionary<string, string?>? config = null)
+        Dictionary<string, string?>? config = null,
+        string environmentName = "Development")
     {
         var testCollector = new TestLogCollector();
         collector = testCollector;
 
-        var builder = WebApplication.CreateBuilder();
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = environmentName });
         builder.WebHost.UseTestServer();
         builder.Configuration.AddInMemoryCollection(config ?? DefaultConfig);
         builder.Services.AddCoreSetup(builder.Configuration);

@@ -20,7 +20,9 @@ public interface ICacheService
 
     /// <summary>
     /// Returns all cache keys matching <paramref name="pattern"/> (e.g. "UserInfo:*").
-    /// The pattern is automatically scoped to the configured prefix.
+    /// The pattern is automatically scoped to the configured prefix (the prefix is matched literally).
+    /// <paramref name="pattern"/> itself is a Redis glob, so it must be a developer-defined constant
+    /// and must not contain user input.
     /// </summary>
     Task<IEnumerable<string>> GetKeysAsync(string pattern, CancellationToken ct = default);
 

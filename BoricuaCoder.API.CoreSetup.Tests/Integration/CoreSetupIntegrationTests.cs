@@ -1,5 +1,6 @@
 using System.Net;
 using BoricuaCoder.API.CoreSetup.Extensions;
+using CoreSetupExtensions = BoricuaCoder.API.CoreSetup.Extensions.ApplicationBuilderExtensions;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -44,6 +45,63 @@ public class CoreSetupIntegrationTests : IAsyncLifetime
 
         Assert.Contains("Test API", body);
     }
+
+    [Fact]
+    public void BuildSwaggerJsonPath_EmptyPrefix() =>
+        Assert.Equal("/v1/swagger.json", CoreSetupExtensions.BuildSwaggerJsonPath("", "v1"));
+
+    [Fact]
+    public void BuildSwaggerJsonPath_CustomPrefix() =>
+        Assert.Equal("/api-docs/v1/swagger.json", CoreSetupExtensions.BuildSwaggerJsonPath("api-docs", "v1"));
+
+    [Fact]
+    public async Task SwaggerJson_CustomRoutePrefix_IsServedUnderPrefix()
+    {
+        var config = new Dictionary<string, string?>(IntegrationTestBase.DefaultConfig)
+        {
+            ["CoreSetup:Swagger:RoutePrefix"] = "api-docs"
+        };
+        await using var app = IntegrationTestBase.BuildApp(config);
+        await app.StartAsync();
+        using var client = app.GetTestClient();
+
+        var json = await client.GetAsync("/api-docs/v1/swagger.json");
+        var ui = await client.GetAsync("/api-docs/index.html");
+        var initJs = await client.GetStringAsync("/api-docs/index.js");
+
+        Assert.Equal(HttpStatusCode.OK, json.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, ui.StatusCode);
+        Assert.Contains("/api-docs/v1/swagger.json", initJs.Replace("\\", ""));
+    }
+
+    [Theory]
+    [InlineData("/docs/")]
+    [InlineData(" docs ")]
+    [InlineData(" /docs/ ")]
+    public async Task SwaggerJson_PrefixWithSlashesOrSpaces_IsNormalized(string routePrefix)
+    {
+        var config = new Dictionary<string, string?>(IntegrationTestBase.DefaultConfig)
+        {
+            ["CoreSetup:Swagger:RoutePrefix"] = routePrefix
+        };
+        await using var app = IntegrationTestBase.BuildApp(config);
+        await app.StartAsync();
+        using var client = app.GetTestClient();
+
+        var json = await client.GetAsync("/docs/v1/swagger.json");
+        var ui = await client.GetAsync("/docs/index.html");
+        var initJs = await client.GetStringAsync("/docs/index.js");
+
+        Assert.Equal(HttpStatusCode.OK, json.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, ui.StatusCode);
+        Assert.Contains("\"/docs/v1/swagger.json\"", initJs.Replace("\\", ""));
+    }
+
+    [Theory]
+    [InlineData("/docs/")]
+    [InlineData(" docs ")]
+    public void BuildSwaggerJsonPath_TrimsSpacesAndSlashes(string prefix) =>
+        Assert.Equal("/docs/v1/swagger.json", CoreSetupExtensions.BuildSwaggerJsonPath(prefix, "v1"));
 
     [Fact]
     public async Task UseCoreSetup_AuthenticationMiddleware_IsRegistered()

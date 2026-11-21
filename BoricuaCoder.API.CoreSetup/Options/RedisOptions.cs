@@ -17,7 +17,8 @@ public sealed class RedisOptions
     public string PrefixKey { get; init; } = string.Empty;
 
     /// <summary>
-    /// Redis connection string (e.g. "localhost:6379" or "redis://user:pass@host:6379").
+    /// StackExchange.Redis configuration string (e.g. "localhost:6379" or "host:6380,password=...,ssl=true").
+    /// URI forms such as <c>redis://</c> are not supported.
     /// Required when <see cref="Enabled"/> is true.
     /// </summary>
     public string ConnectionString { get; init; } = string.Empty;

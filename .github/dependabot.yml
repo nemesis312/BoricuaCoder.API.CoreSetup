@@ -1,0 +1,28 @@
+version: 2
+updates:
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      microsoft:
+        patterns:
+          - "Microsoft.*"
+    ignore:
+      # Library dependency floors: these versions are deliberate minimums for
+      # consumers. Raising them causes NU1605 in apps that pin lower versions
+      # (e.g. Microsoft.OpenApi 1.6.23), so every update is ignored and they
+      # are bumped manually. Swashbuckle 8+ and Microsoft.OpenApi 2.x are
+      # reserved for 2.0.0.
+      - dependency-name: Microsoft.AspNetCore.Authentication.JwtBearer
+      - dependency-name: Microsoft.Extensions.Caching.StackExchangeRedis
+      - dependency-name: Microsoft.OpenApi
+      - dependency-name: Swashbuckle.AspNetCore
+      # Stay on net10.0: Microsoft.* 11.x targets net11.
+      - dependency-name: "Microsoft.*"
+        versions: [">= 11"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

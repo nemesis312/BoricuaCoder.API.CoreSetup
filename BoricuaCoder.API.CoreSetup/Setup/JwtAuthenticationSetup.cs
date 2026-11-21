@@ -1,7 +1,6 @@
 using BoricuaCoder.API.CoreSetup.Options;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.IdentityModel.Tokens;
 
 namespace BoricuaCoder.API.CoreSetup.Setup;
 
@@ -19,24 +18,22 @@ internal static class JwtAuthenticationSetup
                 jwt.Audience = options.Audience;
                 jwt.RequireHttpsMetadata = options.RequireHttpsMetadata;
 
+                // Mutate the existing parameters: replacing the instance would drop defaults and
+                // anything configured by other IConfigureOptions<JwtBearerOptions>.
                 var tv = options.TokenValidation;
-                var hasOverrides = tv.ValidateIssuer.HasValue
-                    || tv.ValidateAudience.HasValue
-                    || tv.ValidateLifetime.HasValue
-                    || tv.ClockSkewSeconds.HasValue;
+                var parameters = jwt.TokenValidationParameters;
 
-                if (hasOverrides)
-                {
-                    jwt.TokenValidationParameters = new TokenValidationParameters
-                    {
-                        ValidateIssuer = tv.ValidateIssuer ?? true,
-                        ValidateAudience = tv.ValidateAudience ?? true,
-                        ValidateLifetime = tv.ValidateLifetime ?? true,
-                        ClockSkew = tv.ClockSkewSeconds.HasValue
-                            ? TimeSpan.FromSeconds(tv.ClockSkewSeconds.Value)
-                            : TimeSpan.FromMinutes(5)
-                    };
-                }
+                if (tv.ValidateIssuer.HasValue)
+                    parameters.ValidateIssuer = tv.ValidateIssuer.Value;
+                if (tv.ValidateAudience.HasValue)
+                    parameters.ValidateAudience = tv.ValidateAudience.Value;
+                if (tv.ValidateLifetime.HasValue)
+                    parameters.ValidateLifetime = tv.ValidateLifetime.Value;
+                if (tv.ClockSkewSeconds.HasValue)
+                    parameters.ClockSkew = TimeSpan.FromSeconds(tv.ClockSkewSeconds.Value);
+
+                if (options.ValidAlgorithms.Length > 0)
+                    parameters.ValidAlgorithms = options.ValidAlgorithms;
             });
 
         services.AddAuthorization();
