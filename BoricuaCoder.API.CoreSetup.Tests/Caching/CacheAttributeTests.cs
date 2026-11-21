@@ -697,6 +697,77 @@ public class CacheAttributeTests
             .SetAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<TimeSpan>());
     }
 
+    // ── Debug logs for silent fallbacks (type name only, never the value) ───
+
+    private static string SerializeDebug(Type type)
+        => $"CoreSetup: [Cache] could not serialize a value of type {type.FullName}; response not cached.";
+
+    private static string KeyDebug(Type type)
+        => $"CoreSetup: [Cache] could not build a cache key for an argument of type {type.FullName}; response not cached.";
+
+    private static void AssertSingleDebug(TestLogCollector collector, string message)
+    {
+        var record = Assert.Single(collector.GetSnapshot(), r => r.Message.StartsWith("CoreSetup: [Cache] could not"));
+        Assert.Equal(LogLevel.Debug, record.Level);
+        Assert.Equal("BoricuaCoder.API.CoreSetup", record.Category);
+        Assert.Equal(message, record.Message);
+    }
+
+    [Fact]
+    public async Task OnActionExecutionAsync_ConverterThrows_LogsDebugWithTypeName()
+    {
+        var collector = new TestLogCollector();
+        var context = BuildMvcContext(EmptyCache(), configure: s =>
+        {
+            s.Configure<Microsoft.AspNetCore.Mvc.JsonOptions>(o => o.JsonSerializerOptions.Converters.Add(new ThrowingConverter()));
+            s.AddLogging(b => b.SetMinimumLevel(LogLevel.Trace).AddTestLogging(collector));
+        });
+
+        await new CacheAttribute(60).OnActionExecutionAsync(context, BuildNext(new OkObjectResult(new Boom { Id = 4242 })));
+
+        AssertSingleDebug(collector, SerializeDebug(typeof(Boom)));
+        Assert.DoesNotContain(collector.GetSnapshot(), r => r.Message.Contains("4242"));
+    }
+
+    [Fact]
+    public async Task InvokeAsync_ConverterThrows_LogsDebugWithTypeName()
+    {
+        var collector = new TestLogCollector();
+        var context = BuildEndpointContext(EmptyCache(), configure: s =>
+        {
+            s.Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(o => o.SerializerOptions.Converters.Add(new ThrowingConverter()));
+            s.AddLogging(b => b.SetMinimumLevel(LogLevel.Trace).AddTestLogging(collector));
+        });
+
+        await new CacheAttribute(60).InvokeAsync(context, _ => ValueTask.FromResult<object?>(TypedResults.Ok(new Boom { Id = 4242 })));
+
+        AssertSingleDebug(collector, SerializeDebug(typeof(Boom)));
+    }
+
+    [Fact]
+    public async Task OnActionExecutionAsync_UnencodableArgument_LogsDebugWithTypeName()
+    {
+        var collector = new TestLogCollector();
+        var context = BuildMvcContext(Substitute.For<ICacheService>(), args: [("filter", SelfReferencingNode())],
+            configure: s => s.AddLogging(b => b.SetMinimumLevel(LogLevel.Trace).AddTestLogging(collector)));
+
+        await new CacheAttribute(60).OnActionExecutionAsync(context, BuildNext(new OkObjectResult("data")));
+
+        AssertSingleDebug(collector, KeyDebug(typeof(Node)));
+    }
+
+    [Fact]
+    public async Task InvokeAsync_UnencodableArgument_LogsDebugWithTypeName()
+    {
+        var collector = new TestLogCollector();
+        var context = BuildEndpointContext(Substitute.For<ICacheService>(), args: [SelfReferencingNode()],
+            configure: s => s.AddLogging(b => b.SetMinimumLevel(LogLevel.Trace).AddTestLogging(collector)));
+
+        await new CacheAttribute(60).InvokeAsync(context, _ => ValueTask.FromResult<object?>(Results.Ok("data")));
+
+        AssertSingleDebug(collector, KeyDebug(typeof(Node)));
+    }
+
     // ── ICacheService resolution failure ──────────────────────────────────────
 
     private const string UnavailableWarning = "CoreSetup: Cache service unavailable; serving uncached response.";

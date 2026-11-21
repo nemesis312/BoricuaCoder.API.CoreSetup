@@ -122,7 +122,7 @@ public sealed class CacheAttribute : Attribute, IAsyncActionFilter, IEndpointFil
             var serializerOptions = httpContext.RequestServices
                 .GetService<IOptions<Microsoft.AspNetCore.Mvc.JsonOptions>>()?.Value?.JsonSerializerOptions
                 ?? JsonSerializerOptions.Default;
-            var json = TrySerialize(objectResult.Value, serializerOptions);
+            var json = TrySerialize(objectResult.Value, serializerOptions, httpContext);
             if (json is not null)
                 await cacheService.SetAsync(key, json, TimeSpan.FromSeconds(ResolveTtl(httpContext)));
         }
@@ -163,7 +163,7 @@ public sealed class CacheAttribute : Attribute, IAsyncActionFilter, IEndpointFil
             var serializerOptions = httpContext.RequestServices
                 .GetService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()?.Value?.SerializerOptions
                 ?? JsonSerializerOptions.Default;
-            var json = TrySerialize(valueToCache, serializerOptions);
+            var json = TrySerialize(valueToCache, serializerOptions, httpContext);
             if (json is not null)
                 await cacheService.SetAsync(key, json, TimeSpan.FromSeconds(ResolveTtl(httpContext)));
         }
@@ -228,7 +228,7 @@ public sealed class CacheAttribute : Attribute, IAsyncActionFilter, IEndpointFil
         return value is ProblemDetails ? null : value;
     }
 
-    private static string? TrySerialize(object value, JsonSerializerOptions options)
+    private static string? TrySerialize(object value, JsonSerializerOptions options, HttpContext httpContext)
     {
         try
         {
@@ -237,6 +237,12 @@ public sealed class CacheAttribute : Attribute, IAsyncActionFilter, IEndpointFil
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             // A failing serializer or custom converter must never turn a good response into a 500.
+            // Log the type name only: the value (and the exception message) can carry response data.
+            var type = value.GetType();
+            httpContext.RequestServices?.GetService<ILoggerFactory>()
+                ?.CreateLogger(Extensions.ApplicationBuilderExtensions.LogCategory)
+                .LogDebug("CoreSetup: [Cache] could not serialize a value of type {Type}; response not cached.",
+                    type.FullName ?? type.Name);
             return null;
         }
     }

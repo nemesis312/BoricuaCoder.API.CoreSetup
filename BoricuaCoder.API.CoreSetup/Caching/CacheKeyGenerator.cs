@@ -14,6 +14,7 @@ using Microsoft.AspNetCore.Mvc.Infrastructure;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace BoricuaCoder.API.CoreSetup.Caching;
@@ -52,6 +53,7 @@ internal static class CacheKeyGenerator
         var isService = services?.GetService<IServiceProviderIsService>();
         var json = services?.GetService<IOptions<Microsoft.AspNetCore.Mvc.JsonOptions>>()?.Value?.JsonSerializerOptions
                    ?? JsonSerializerOptions.Default;
+        var loggerFactory = services?.GetService<ILoggerFactory>();
 
         var tokens = new List<string>();
         foreach (var parameter in context.ActionDescriptor.Parameters)
@@ -62,7 +64,7 @@ internal static class CacheKeyGenerator
                 || IsMvcServiceParameter(parameter, isService))
                 continue;
 
-            var token = EncodeArg(value, json);
+            var token = EncodeArg(value, json, loggerFactory);
             if (token is null)
                 return null;
             tokens.Add(token);
@@ -82,6 +84,7 @@ internal static class CacheKeyGenerator
         var isService = services?.GetService<IServiceProviderIsService>();
         var json = services?.GetService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()?.Value?.SerializerOptions
                    ?? JsonSerializerOptions.Default;
+        var loggerFactory = services?.GetService<ILoggerFactory>();
 
         // Declared handler parameters line up by position with the filter arguments. Without them
         // (no MethodInfo, or a count mismatch) fall back to the runtime type of each value.
@@ -110,7 +113,7 @@ internal static class CacheKeyGenerator
                 continue;
             }
 
-            var token = EncodeArg(value, json);
+            var token = EncodeArg(value, json, loggerFactory);
             if (token is null)
                 return null;
             tokens.Add(token);
@@ -122,9 +125,9 @@ internal static class CacheKeyGenerator
     /// <summary>
     /// Encodes one argument as a key-safe token. <c>%</c> is null, <c>%e</c> is an empty string, <c>%h…</c> is a hash; every other
     /// token is percent-escaped, so neither can be produced by a literal value. Returns null when the
-    /// value cannot be serialized.
+    /// value cannot be serialized; that case is logged at Debug with the value's type name only.
     /// </summary>
-    internal static string? EncodeArg(object? value, JsonSerializerOptions options)
+    internal static string? EncodeArg(object? value, JsonSerializerOptions options, ILoggerFactory? loggerFactory = null)
     {
         switch (value)
         {
@@ -151,8 +154,12 @@ internal static class CacheKeyGenerator
             var bytes = JsonSerializer.SerializeToUtf8Bytes(value, type, options);
             return HashMarker + Sha256Hex(bytes)[..32];
         }
-        catch (Exception)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
+            // Type name only: the value (and the exception message) can carry request data.
+            loggerFactory?.CreateLogger(Extensions.ApplicationBuilderExtensions.LogCategory)
+                .LogDebug("CoreSetup: [Cache] could not build a cache key for an argument of type {Type}; response not cached.",
+                    type.FullName ?? type.Name);
             return null;
         }
     }
@@ -286,11 +293,17 @@ internal static class CacheKeyGenerator
 
     private static bool IsMvcServiceParameter(ParameterDescriptor parameter, IServiceProviderIsService? isService)
     {
-        if (parameter.BindingInfo?.BindingSource == BindingSource.Services)
+        var source = parameter.BindingInfo?.BindingSource;
+        if (source == BindingSource.Services)
             return true;
 
         if (parameter is IParameterInfoParameterDescriptor { ParameterInfo: { } info } && HasServiceAttribute(info))
             return true;
+
+        // An explicit request binding source (Query, Path, Body, Form, Header, Custom...) is request
+        // data even when the type also happens to be registered in DI.
+        if (source is not null)
+            return false;
 
         return IsInjectableService(parameter.ParameterType, isService);
     }

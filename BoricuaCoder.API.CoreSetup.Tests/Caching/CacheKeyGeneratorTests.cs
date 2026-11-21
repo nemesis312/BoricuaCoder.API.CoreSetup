@@ -295,6 +295,52 @@ public class CacheKeyGeneratorTests
         Assert.Matches("^Users::Get%i[0-9a-f]{8}:5:%s$", CacheKeyGenerator.Generate(null, context, null));
     }
 
+    [Theory]
+    [MemberData(nameof(RequestDataSources))]
+    public void Generate_Mvc_ExplicitRequestBinding_TypeRegisteredInDi_IsPartOfKey(string sourceId)
+    {
+        // Filter is registered in DI, but an explicit request binding source means request data.
+        var source = RequestDataSourceById(sourceId);
+        var services = new ServiceCollection();
+        services.AddSingleton(new Filter("from-di"));
+        var provider = services.BuildServiceProvider();
+        ActionExecutingContext Build(string q) => BuildMvcContext("Orders", "Search",
+            [Param("f", typeof(Filter), new BindingInfo { BindingSource = source })],
+            new() { ["f"] = new Filter(q) }, provider);
+
+        var k1 = CacheKeyGenerator.Generate(null, Build("a"), null);
+        var k2 = CacheKeyGenerator.Generate(null, Build("b"), null);
+
+        Assert.NotEqual(k1, k2);
+        Assert.Matches("^Orders::Search%i[0-9a-f]{8}:%h[0-9a-f]{32}:%s$", k1!);
+    }
+
+    public static TheoryData<string> RequestDataSources()
+        => new() { "Query", "Route", "Body", "Form", "Header", "Path", "Custom" };
+
+    private static BindingSource RequestDataSourceById(string id) => id switch
+    {
+        "Query" => BindingSource.Query,
+        "Route" => BindingSource.Path,
+        "Body" => BindingSource.Body,
+        "Form" => BindingSource.Form,
+        "Header" => BindingSource.Header,
+        "Path" => BindingSource.Path,
+        _ => BindingSource.Custom
+    };
+
+    [Fact]
+    public void Generate_Mvc_NoBindingSource_TypeRegisteredInDi_IsExcluded()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(new Filter("from-di"));
+        var context = BuildMvcContext("Orders", "Search",
+            [Param("f", typeof(Filter)), Param("id", typeof(int))],
+            new() { ["f"] = new Filter("a"), ["id"] = 3 }, services.BuildServiceProvider());
+
+        Assert.Matches("^Orders::Search%i[0-9a-f]{8}:3:%s$", CacheKeyGenerator.Generate(null, context, null));
+    }
+
     [Fact]
     public void Generate_Mvc_RegisteredInterfaceParam_IsExcluded()
     {
