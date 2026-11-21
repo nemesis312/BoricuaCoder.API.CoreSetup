@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace BoricuaCoder.API.CoreSetup.Caching;
@@ -77,7 +78,7 @@ public sealed class CacheAttribute : Attribute, IAsyncActionFilter, IEndpointFil
             return;
         }
 
-        var cacheService = httpContext.RequestServices.GetService<ICacheService>();
+        var cacheService = ResolveCacheService(httpContext);
         if (cacheService is null)
         {
             await next();
@@ -135,7 +136,7 @@ public sealed class CacheAttribute : Attribute, IAsyncActionFilter, IEndpointFil
         if (!IsCacheableMethod(httpContext.Request.Method))
             return await next(context);
 
-        var cacheService = httpContext.RequestServices.GetService<ICacheService>();
+        var cacheService = ResolveCacheService(httpContext);
         if (cacheService is null)
             return await next(context);
 
@@ -170,6 +171,25 @@ public sealed class CacheAttribute : Attribute, IAsyncActionFilter, IEndpointFil
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Resolves the cache service, or returns null when it is not registered or its construction fails
+    /// (for example a bad Redis configuration), so the endpoint is served uncached instead of failing.
+    /// </summary>
+    private static ICacheService? ResolveCacheService(HttpContext httpContext)
+    {
+        try
+        {
+            return httpContext.RequestServices.GetService<ICacheService>();
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            httpContext.RequestServices.GetService<ILoggerFactory>()
+                ?.CreateLogger(Extensions.ApplicationBuilderExtensions.LogCategory)
+                .LogWarning(ex, "CoreSetup: Cache service unavailable; serving uncached response.");
+            return null;
+        }
+    }
 
     private static bool IsCacheableMethod(string method)
         => HttpMethods.IsGet(method) || HttpMethods.IsHead(method);

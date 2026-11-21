@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Options;
+using StackExchange.Redis;
 
 namespace BoricuaCoder.API.CoreSetup.Options;
 
@@ -47,8 +48,10 @@ internal sealed class CoreSetupOptionsValidator : IValidateOptions<CoreSetupOpti
 
         if (options.Redis.Enabled)
         {
-            if (string.IsNullOrEmpty(options.Redis.ConnectionString))
+            if (string.IsNullOrWhiteSpace(options.Redis.ConnectionString))
                 errors.Add("CoreSetup:Redis:ConnectionString is required when Redis is enabled.");
+            else
+                ValidateRedisConnectionString(options.Redis.ConnectionString, errors);
 
             if (options.Redis.DefaultTTL <= 0)
                 errors.Add("CoreSetup:Redis:DefaultTTL must be greater than 0.");
@@ -60,5 +63,26 @@ internal sealed class CoreSetupOptionsValidator : IValidateOptions<CoreSetupOpti
         return errors.Count > 0
             ? ValidateOptionsResult.Fail(errors)
             : ValidateOptionsResult.Success;
+    }
+
+    /// <summary>
+    /// Checks that the connection string parses and names an endpoint. Messages never include the
+    /// value, which can carry a password.
+    /// </summary>
+    private static void ValidateRedisConnectionString(string connectionString, List<string> errors)
+    {
+        ConfigurationOptions parsed;
+        try
+        {
+            parsed = ConfigurationOptions.Parse(connectionString);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            errors.Add("CoreSetup:Redis:ConnectionString is not a valid StackExchange.Redis configuration string.");
+            return;
+        }
+
+        if (parsed.EndPoints.Count == 0)
+            errors.Add("CoreSetup:Redis:ConnectionString must contain at least one host:port endpoint.");
     }
 }

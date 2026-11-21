@@ -160,6 +160,8 @@ public sealed class RedisCachingIntegrationTests(RedisContainerFixture redis)
         var keyed = app.Services.GetRequiredKeyedService<IConnectionMultiplexer>(RedisSetup.MultiplexerServiceKey);
 
         Assert.Same(keyed, unkeyed);
+        // abortConnect=false returns before the handshake may finish; a ping waits for a live connection.
+        await keyed.GetDatabase().PingAsync().WaitAsync(TimeSpan.FromSeconds(5));
         Assert.True(keyed.IsConnected);
     }
 

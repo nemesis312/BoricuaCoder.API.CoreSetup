@@ -294,4 +294,74 @@ public class CoreSetupOptionsValidatorTests
         Assert.True(result.Failed);
         Assert.True(result.Failures!.Count() >= 3);
     }
+
+    // ── Redis connection string parsing ───────────────────────────────────────
+
+    private static ValidateOptionsResult ValidateRedis(string connectionString) =>
+        Validate(new CoreSetupOptions
+        {
+            Redis = new RedisOptions { Enabled = true, ConnectionString = connectionString }
+        });
+
+    [Fact]
+    public void Validate_RedisEnabled_BogusKeyword_FailsWithoutEchoingValue()
+    {
+        var result = ValidateRedis("host:6379,password=Hunter2xyz,bogus=1");
+
+        Assert.True(result.Failed);
+        Assert.Contains(
+            "CoreSetup:Redis:ConnectionString is not a valid StackExchange.Redis configuration string.",
+            result.Failures!);
+        Assert.DoesNotContain(result.Failures!, f => f.Contains("Hunter2xyz") || f.Contains("bogus"));
+    }
+
+    [Theory]
+    [InlineData("password=Hunter2xyz")]
+    [InlineData("ssl=true,abortConnect=false")]
+    public void Validate_RedisEnabled_NoEndpoints_Fails(string connectionString)
+    {
+        var result = ValidateRedis(connectionString);
+
+        Assert.True(result.Failed);
+        Assert.Contains(
+            "CoreSetup:Redis:ConnectionString must contain at least one host:port endpoint.",
+            result.Failures!);
+        Assert.DoesNotContain(result.Failures!, f => f.Contains("Hunter2xyz"));
+    }
+
+    [Theory]
+    [InlineData(" ")]
+    [InlineData("\t  ")]
+    public void Validate_RedisEnabled_WhitespaceConnectionString_FailsAsRequired(string connectionString)
+    {
+        var result = ValidateRedis(connectionString);
+
+        Assert.True(result.Failed);
+        Assert.Contains("CoreSetup:Redis:ConnectionString is required when Redis is enabled.", result.Failures!);
+    }
+
+    [Fact]
+    public void Validate_RedisEnabled_ValidStringWithPassword_Succeeds()
+    {
+        var result = ValidateRedis("redis.example.com:6380,password=Hunter2xyz,ssl=true,abortConnect=false");
+
+        Assert.True(result.Succeeded);
+    }
+
+    [Fact]
+    public void Validate_RedisEnabled_InvalidStringWithPassword_ErrorsNeverContainPassword()
+    {
+        var result = Validate(new CoreSetupOptions
+        {
+            Redis = new RedisOptions
+            {
+                Enabled = true,
+                ConnectionString = "redis.example.com:6380,password=Hunter2xyz,nope=1",
+                DefaultTTL = 0
+            }
+        });
+
+        Assert.True(result.Failed);
+        Assert.DoesNotContain(result.Failures!, f => f.Contains("Hunter2xyz"));
+    }
 }

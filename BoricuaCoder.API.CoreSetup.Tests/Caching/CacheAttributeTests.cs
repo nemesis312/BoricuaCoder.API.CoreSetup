@@ -10,7 +10,9 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Abstractions;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Routing;
+using BoricuaCoder.API.CoreSetup.Tests.Integration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using NSubstitute;
 
 namespace BoricuaCoder.API.CoreSetup.Tests.Caching;
@@ -693,6 +695,79 @@ public class CacheAttributeTests
         Assert.Same(ok, result);
         await cacheService.DidNotReceive()
             .SetAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<TimeSpan>());
+    }
+
+    // ── ICacheService resolution failure ──────────────────────────────────────
+
+    private const string UnavailableWarning = "CoreSetup: Cache service unavailable; serving uncached response.";
+
+    private static Action<IServiceCollection> ThrowingCacheService(TestLogCollector collector) => services =>
+    {
+        services.AddSingleton<ICacheService>(_ =>
+            throw new ArgumentException("Keyword 'bogus' is not supported."));
+        services.AddLogging(b => b.SetMinimumLevel(LogLevel.Trace).AddTestLogging(collector));
+    };
+
+    private static void AssertSingleUnavailableWarning(TestLogCollector collector) =>
+        Assert.Single(collector.GetSnapshot(), r =>
+            r.Level == LogLevel.Warning
+            && r.Category == "BoricuaCoder.API.CoreSetup"
+            && r.Message == UnavailableWarning);
+
+    [Fact]
+    public async Task OnActionExecutionAsync_CacheServiceFactoryThrows_CallsNextAndKeepsResult()
+    {
+        var collector = new TestLogCollector();
+        var context = BuildMvcContext(cacheService: null, configure: ThrowingCacheService(collector));
+        var original = new OkObjectResult(new { Name = "Widget" });
+        var nextCalled = false;
+        var attribute = new CacheAttribute(60);
+
+        var ex = await Record.ExceptionAsync(() => attribute.OnActionExecutionAsync(context, () =>
+        {
+            nextCalled = true;
+            return Task.FromResult(new ActionExecutedContext(context, [], new object()) { Result = original });
+        }));
+
+        Assert.Null(ex);
+        Assert.True(nextCalled);
+        Assert.Null(context.Result);
+        AssertSingleUnavailableWarning(collector);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_CacheServiceFactoryThrows_CallsNextAndReturnsOriginalResult()
+    {
+        var collector = new TestLogCollector();
+        var context = BuildEndpointContext(cacheService: null, configure: ThrowingCacheService(collector));
+        var original = TypedResults.Ok(new { Name = "Widget" });
+        var nextCalled = false;
+        var attribute = new CacheAttribute(60);
+
+        object? result = null;
+        var ex = await Record.ExceptionAsync(async () => result = await attribute.InvokeAsync(context, _ =>
+        {
+            nextCalled = true;
+            return ValueTask.FromResult<object?>(original);
+        }));
+
+        Assert.Null(ex);
+        Assert.True(nextCalled);
+        Assert.Same(original, result);
+        AssertSingleUnavailableWarning(collector);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_CacheServiceFactoryThrows_WithoutLoggerFactory_StillCallsNext()
+    {
+        var context = BuildEndpointContext(cacheService: null, configure: services =>
+            services.AddSingleton<ICacheService>(_ => throw new InvalidOperationException("boom")));
+        var original = TypedResults.Ok(1);
+        var attribute = new CacheAttribute(60);
+
+        var result = await attribute.InvokeAsync(context, _ => ValueTask.FromResult<object?>(original));
+
+        Assert.Same(original, result);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
