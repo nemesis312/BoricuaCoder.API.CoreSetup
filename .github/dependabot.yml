@@ -1,0 +1,24 @@
+version: 2
+updates:
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      microsoft:
+        patterns:
+          - "Microsoft.*"
+    ignore:
+      # Swashbuckle 8+ and Microsoft.OpenApi 2.x are reserved for 2.0.0.
+      - dependency-name: Swashbuckle.AspNetCore
+        update-types: ["version-update:semver-major"]
+      - dependency-name: Microsoft.OpenApi
+        update-types: ["version-update:semver-major"]
+      # Stay on net10.0: Microsoft.* 11.x targets net11.
+      - dependency-name: "Microsoft.*"
+        versions: [">= 11"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
