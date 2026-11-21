@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using BoricuaCoder.API.CoreSetup.Caching;
 using BoricuaCoder.API.CoreSetup.Options;
 using Microsoft.AspNetCore.Authorization;
@@ -101,10 +102,25 @@ public class CacheAttributeTests
         var context = BuildMvcContext(cacheService, redisOptions: new RedisOptions { DefaultTTL = 120 });
         var attribute = new CacheAttribute(0);
 
-        await attribute.OnActionExecutionAsync(context, BuildNext(new OkObjectResult("data")));
+        await attribute.OnActionExecutionAsync(context, BuildNext(new OkObjectResult(new { Name = "Widget" })));
 
         await cacheService.Received(1)
             .SetAsync(Arg.Any<string>(), Arg.Any<string>(), TimeSpan.FromSeconds(120));
+    }
+
+    [Fact]
+    public async Task OnActionExecutionAsync_StringValue_IsNotCached()
+    {
+        var cacheService = Substitute.For<ICacheService>();
+        cacheService.GetAsync<string>(Arg.Any<string>()).Returns((string?)null);
+
+        var context = BuildMvcContext(cacheService);
+        var attribute = new CacheAttribute(60);
+
+        await attribute.OnActionExecutionAsync(context, BuildNext(new OkObjectResult("data")));
+
+        await cacheService.DidNotReceive()
+            .SetAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<TimeSpan>());
     }
 
     [Fact]
@@ -120,7 +136,7 @@ public class CacheAttributeTests
         cacheService.When(s => s.SetAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<TimeSpan>()))
             .Do(call => capturedKey = call.ArgAt<string>(0));
 
-        await attribute.OnActionExecutionAsync(context, BuildNext(new OkObjectResult("data")));
+        await attribute.OnActionExecutionAsync(context, BuildNext(new OkObjectResult(new { Name = "Widget" })));
 
         Assert.NotNull(capturedKey);
         Assert.StartsWith("UserInfo", capturedKey);
@@ -536,7 +552,147 @@ public class CacheAttributeTests
         await attribute.InvokeAsync(BuildEndpointContext(cacheA, user: User("a")), _ => ValueTask.FromResult<object?>(TypedResults.Ok("x")));
         await attribute.InvokeAsync(BuildEndpointContext(cacheB, user: User("b")), _ => ValueTask.FromResult<object?>(TypedResults.Ok("x")));
 
-        Assert.NotEqual(CapturedGetKey(cacheA), CapturedGetKey(cacheB));
+        var keyA = CapturedGetKey(cacheA);
+        var keyB = CapturedGetKey(cacheB);
+        Assert.NotNull(keyA);
+        Assert.NotNull(keyB);
+        Assert.NotEqual(keyA, keyB);
+    }
+
+    // ── Fix round 1: status, ProblemDetails, exceptions, converters ──────────
+
+    private sealed class Boom
+    {
+        public int Id { get; set; }
+    }
+
+    private sealed class ThrowingConverter : JsonConverter<Boom>
+    {
+        public override Boom Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+            => throw new ArgumentException("boom");
+
+        public override void Write(Utf8JsonWriter writer, Boom value, JsonSerializerOptions options)
+            => throw new ArgumentException("boom");
+    }
+
+    private static ActionExecutionDelegate BuildNextOn(ActionExecutingContext context, IActionResult result,
+        int? statusCode = null, Exception? exception = null)
+    {
+        return () =>
+        {
+            if (statusCode is not null)
+                context.HttpContext.Response.StatusCode = statusCode.Value;
+            return Task.FromResult(new ActionExecutedContext(context, [], new object())
+            {
+                Result = result,
+                Exception = exception
+            });
+        };
+    }
+
+    [Fact]
+    public async Task OnActionExecutionAsync_ProblemDetailsValue_IsNotCached()
+    {
+        var cacheService = EmptyCache();
+        var context = BuildMvcContext(cacheService);
+        var attribute = new CacheAttribute(60);
+
+        await attribute.OnActionExecutionAsync(context, BuildNext(new ObjectResult(new ProblemDetails { Status = 404 })));
+        await attribute.OnActionExecutionAsync(context, BuildNext(new ObjectResult(new ValidationProblemDetails())));
+
+        await cacheService.DidNotReceive()
+            .SetAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<TimeSpan>());
+    }
+
+    [Fact]
+    public async Task OnActionExecutionAsync_ManualStatus404_IsNotCached()
+    {
+        var cacheService = EmptyCache();
+        var context = BuildMvcContext(cacheService);
+        var attribute = new CacheAttribute(60);
+
+        await attribute.OnActionExecutionAsync(context,
+            BuildNextOn(context, new ObjectResult(new Item(1, "Widget")), statusCode: StatusCodes.Status404NotFound));
+
+        await cacheService.DidNotReceive()
+            .SetAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<TimeSpan>());
+    }
+
+    [Fact]
+    public async Task OnActionExecutionAsync_ExceptionWithOkResult_IsNotCached()
+    {
+        var cacheService = EmptyCache();
+        var context = BuildMvcContext(cacheService);
+        var attribute = new CacheAttribute(60);
+
+        await attribute.OnActionExecutionAsync(context,
+            BuildNextOn(context, new OkObjectResult(new Item(1, "Widget")), exception: new InvalidOperationException("fail")));
+
+        await cacheService.DidNotReceive()
+            .SetAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<TimeSpan>());
+    }
+
+    [Fact]
+    public async Task OnActionExecutionAsync_ConverterThrowsArgumentException_ReturnsResultWithoutCaching()
+    {
+        var cacheService = EmptyCache();
+        var context = BuildMvcContext(cacheService,
+            configure: s => s.Configure<Microsoft.AspNetCore.Mvc.JsonOptions>(o => o.JsonSerializerOptions.Converters.Add(new ThrowingConverter())));
+        var attribute = new CacheAttribute(60);
+
+        await attribute.OnActionExecutionAsync(context, BuildNext(new OkObjectResult(new Boom { Id = 1 })));
+
+        await cacheService.DidNotReceive()
+            .SetAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<TimeSpan>());
+    }
+
+    [Fact]
+    public async Task InvokeAsync_ManualStatus404WithPlainValue_IsNotCached()
+    {
+        var cacheService = EmptyCache();
+        var context = BuildEndpointContext(cacheService);
+        var attribute = new CacheAttribute(60);
+        var item = new Item(1, "Widget");
+
+        var result = await attribute.InvokeAsync(context, ctx =>
+        {
+            ctx.HttpContext.Response.StatusCode = StatusCodes.Status404NotFound;
+            return ValueTask.FromResult<object?>(item);
+        });
+
+        Assert.Same(item, result);
+        await cacheService.DidNotReceive()
+            .SetAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<TimeSpan>());
+    }
+
+    [Fact]
+    public async Task InvokeAsync_ProblemDetailsPlainValue_IsNotCached()
+    {
+        var cacheService = EmptyCache();
+        var context = BuildEndpointContext(cacheService);
+        var attribute = new CacheAttribute(60);
+
+        await attribute.InvokeAsync(context, _ => ValueTask.FromResult<object?>(new ProblemDetails { Status = 404 }));
+        await attribute.InvokeAsync(context, _ => ValueTask.FromResult<object?>(TypedResults.Ok(new HttpValidationProblemDetails())));
+
+        await cacheService.DidNotReceive()
+            .SetAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<TimeSpan>());
+    }
+
+    [Fact]
+    public async Task InvokeAsync_ConverterThrowsArgumentException_ReturnsResultWithoutCaching()
+    {
+        var cacheService = EmptyCache();
+        var context = BuildEndpointContext(cacheService,
+            configure: s => s.Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(o => o.SerializerOptions.Converters.Add(new ThrowingConverter())));
+        var attribute = new CacheAttribute(60);
+        var ok = TypedResults.Ok(new Boom { Id = 1 });
+
+        var result = await attribute.InvokeAsync(context, _ => ValueTask.FromResult<object?>(ok));
+
+        Assert.Same(ok, result);
+        await cacheService.DidNotReceive()
+            .SetAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<TimeSpan>());
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -547,7 +703,8 @@ public class CacheAttributeTests
         (string Name, object? Value)[]? args = null,
         string method = "GET",
         ClaimsPrincipal? user = null,
-        object[]? metadata = null)
+        object[]? metadata = null,
+        Action<IServiceCollection>? configure = null)
     {
         var services = new ServiceCollection();
         if (cacheService is not null)
@@ -555,6 +712,7 @@ public class CacheAttributeTests
             services.AddSingleton(cacheService);
             services.AddSingleton(redisOptions ?? DefaultRedisOptions);
         }
+        configure?.Invoke(services);
         var sp = services.BuildServiceProvider();
 
         var httpContext = BuildHttpContext(sp, method, user, metadata);
@@ -578,7 +736,8 @@ public class CacheAttributeTests
         object?[]? args = null,
         string method = "GET",
         ClaimsPrincipal? user = null,
-        object[]? metadata = null)
+        object[]? metadata = null,
+        Action<IServiceCollection>? configure = null)
     {
         var services = new ServiceCollection();
         if (cacheService is not null)
@@ -586,6 +745,7 @@ public class CacheAttributeTests
             services.AddSingleton(cacheService);
             services.AddSingleton(redisOptions ?? DefaultRedisOptions);
         }
+        configure?.Invoke(services);
         var sp = services.BuildServiceProvider();
 
         var httpContext = BuildHttpContext(sp, method, user, metadata);

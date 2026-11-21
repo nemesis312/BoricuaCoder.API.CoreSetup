@@ -19,9 +19,12 @@ namespace BoricuaCoder.API.CoreSetup.Caching;
 /// touching the cache. Only successful responses are stored: for MVC an <see cref="ObjectResult"/> with a
 /// non-null value and a status code of 200 (or none, as with <c>ActionResult&lt;T&gt;</c>); for minimal
 /// APIs an <see cref="IValueHttpResult"/> with a non-null value and a status code of 200 (or none), or a
-/// plain non-string return value. Nested results such as <c>Results&lt;Ok&lt;T&gt;, NotFound&gt;</c> are
-/// unwrapped first, and only the value is stored. A hit is replayed as 200 with <c>application/json</c>.
-/// A value that cannot be serialized is returned normally and not cached.
+/// plain return value. On both paths <c>HttpContext.Response.StatusCode</c> must still be 200 after the
+/// endpoint runs, and <c>string</c> and <see cref="ProblemDetails"/> values (including derived types such
+/// as <c>ValidationProblemDetails</c>) are never cached. Nested results such as
+/// <c>Results&lt;Ok&lt;T&gt;, NotFound&gt;</c> are unwrapped first, and only the value is stored. A hit is
+/// replayed as 200 with <c>application/json</c>. A value that cannot be serialized (including a custom
+/// converter that throws) is returned normally and not cached.
 /// </para>
 /// <para>
 /// <see cref="UserScope"/> controls whether an entry is shared or kept per user. The default,
@@ -110,8 +113,9 @@ public sealed class CacheAttribute : Attribute, IAsyncActionFilter, IEndpointFil
         var executed = await next();
 
         if (executed.Exception is null
-            && executed.Result is ObjectResult { Value: not null } objectResult
-            && objectResult.StatusCode is null or StatusCodes.Status200OK)
+            && executed.Result is ObjectResult { Value: not null and not string and not ProblemDetails } objectResult
+            && objectResult.StatusCode is null or StatusCodes.Status200OK
+            && httpContext.Response.StatusCode == StatusCodes.Status200OK)
         {
             var serializerOptions = httpContext.RequestServices
                 .GetService<IOptions<Microsoft.AspNetCore.Mvc.JsonOptions>>()?.Value?.JsonSerializerOptions
@@ -149,7 +153,9 @@ public sealed class CacheAttribute : Attribute, IAsyncActionFilter, IEndpointFil
 
         var result = await next(context);
 
-        var valueToCache = GetCacheableValue(result);
+        var valueToCache = httpContext.Response.StatusCode == StatusCodes.Status200OK
+            ? GetCacheableValue(result)
+            : null;
         if (valueToCache is not null)
         {
             var serializerOptions = httpContext.RequestServices
@@ -179,7 +185,7 @@ public sealed class CacheAttribute : Attribute, IAsyncActionFilter, IEndpointFil
     /// <summary>
     /// Returns the value to store for a minimal API result, or null when it must not be cached.
     /// Nested results are unwrapped; only a 200 (or status-less) value result or a plain non-string
-    /// value qualifies.
+    /// value qualifies, and never a <see cref="ProblemDetails"/>.
     /// </summary>
     private static object? GetCacheableValue(object? result)
     {
@@ -187,16 +193,18 @@ public sealed class CacheAttribute : Attribute, IAsyncActionFilter, IEndpointFil
         while (current is INestedHttpResult nested)
             current = nested.Result;
 
-        return current switch
+        var value = current switch
         {
             null => null,
-            IResult httpResult => httpResult is IValueHttpResult { Value: { } value }
+            IResult httpResult => httpResult is IValueHttpResult { Value: { } inner }
                                   && (httpResult as IStatusCodeHttpResult)?.StatusCode is null or StatusCodes.Status200OK
-                ? value
+                ? inner
                 : null,
             string => null,
             _ => current
         };
+
+        return value is ProblemDetails ? null : value;
     }
 
     private static string? TrySerialize(object value, JsonSerializerOptions options)
@@ -205,8 +213,9 @@ public sealed class CacheAttribute : Attribute, IAsyncActionFilter, IEndpointFil
         {
             return JsonSerializer.Serialize(value, options);
         }
-        catch (Exception ex) when (ex is JsonException or NotSupportedException or InvalidOperationException)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
+            // A failing serializer or custom converter must never turn a good response into a 500.
             return null;
         }
     }
