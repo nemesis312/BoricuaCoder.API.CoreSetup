@@ -15,11 +15,28 @@ namespace BoricuaCoder.API.CoreSetup.Caching;
 /// For MVC controllers, apply directly as an attribute: <c>[Cache(300)]</c><br/>
 /// For minimal APIs, chain on the route builder: <c>.AddEndpointFilter(new CacheAttribute(300))</c>
 /// <para>
+/// Only <c>GET</c> and <c>HEAD</c> requests are cached; every other method runs the endpoint without
+/// touching the cache. Only successful responses are stored: for MVC an <see cref="ObjectResult"/> with a
+/// non-null value and a status code of 200 (or none, as with <c>ActionResult&lt;T&gt;</c>); for minimal
+/// APIs an <see cref="IValueHttpResult"/> with a non-null value and a status code of 200 (or none), or a
+/// plain non-string return value. Nested results such as <c>Results&lt;Ok&lt;T&gt;, NotFound&gt;</c> are
+/// unwrapped first, and only the value is stored. A hit is replayed as 200 with <c>application/json</c>.
+/// A value that cannot be serialized is returned normally and not cached.
+/// </para>
+/// <para>
+/// <see cref="UserScope"/> controls whether an entry is shared or kept per user. The default,
+/// <see cref="CacheUserScope.Auto"/>, keys the entry per user when the request is authenticated or the
+/// endpoint requires authorization. An authenticated caller without a <c>sub</c> or <c>NameIdentifier</c>
+/// claim is never cached. Set <c>UserScope = CacheUserScope.Shared</c> only for responses that contain no
+/// user-specific data: <c>[Cache(60, UserScope = CacheUserScope.Shared)]</c>.
+/// </para>
+/// <para>
 /// When seconds is 0, the TTL falls back to <c>CoreSetup:Redis:DefaultTTL</c> (default 300 s).<br/>
 /// When a custom key is supplied (e.g. "UserInfo"), the cache key becomes
-/// <c>{PrefixKey}UserInfo:{args}:{endpointId}</c>; otherwise it is <c>{PrefixKey}{endpointId}:{args}</c>,
-/// where the endpoint id is the controller/action name (MVC) or the endpoint name or route (minimal APIs)
-/// and each argument is escaped, or hashed when it is long or complex.
+/// <c>{PrefixKey}UserInfo:{args}:{endpointId}:{userSegment}</c>; otherwise it is
+/// <c>{PrefixKey}{endpointId}:{args}:{userSegment}</c>, where the endpoint id is the controller/action name
+/// (MVC) or the endpoint name or route (minimal APIs), each argument is escaped, or hashed when it is long
+/// or complex, and the user segment is present only for per-user entries.
 /// </para>
 /// </remarks>
 [AttributeUsage(AttributeTargets.Method | AttributeTargets.Class)]
@@ -30,6 +47,12 @@ public sealed class CacheAttribute : Attribute, IAsyncActionFilter, IEndpointFil
 
     /// <summary>Optional custom key segment. Overrides the auto-generated class::method segment.</summary>
     public string? CustomKey { get; }
+
+    /// <summary>
+    /// Whether the cached entry is shared by every caller or kept per user. Defaults to
+    /// <see cref="CacheUserScope.Auto"/>.
+    /// </summary>
+    public CacheUserScope UserScope { get; set; } = CacheUserScope.Auto;
 
     /// <param name="seconds">Cache TTL in seconds. 0 falls back to DefaultTTL.</param>
     /// <param name="customKey">Custom key segment (e.g. "UserInfo"). Null uses reflection-based naming.</param>
@@ -44,16 +67,28 @@ public sealed class CacheAttribute : Attribute, IAsyncActionFilter, IEndpointFil
     /// <inheritdoc />
     public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
     {
-        var cacheService = context.HttpContext.RequestServices.GetService<ICacheService>();
+        var httpContext = context.HttpContext;
+        if (!IsCacheableMethod(httpContext.Request.Method))
+        {
+            await next();
+            return;
+        }
+
+        var cacheService = httpContext.RequestServices.GetService<ICacheService>();
         if (cacheService is null)
         {
             await next();
             return;
         }
 
-        var redisOptions = context.HttpContext.RequestServices.GetService<RedisOptions>() ?? new RedisOptions();
-        var ttl = Seconds > 0 ? Seconds : redisOptions.DefaultTTL;
-        var key = CacheKeyGenerator.Generate(CustomKey, context, userSegment: null);
+        var scope = CacheUserScopeResolver.Resolve(httpContext, UserScope);
+        if (!scope.CanCache)
+        {
+            await next();
+            return;
+        }
+
+        var key = CacheKeyGenerator.Generate(CustomKey, context, scope.UserSegment);
         if (key is null)
         {
             await next();
@@ -74,13 +109,16 @@ public sealed class CacheAttribute : Attribute, IAsyncActionFilter, IEndpointFil
 
         var executed = await next();
 
-        if (executed.Result is OkObjectResult { Value: not null } okResult)
+        if (executed.Exception is null
+            && executed.Result is ObjectResult { Value: not null } objectResult
+            && objectResult.StatusCode is null or StatusCodes.Status200OK)
         {
-            var mvcJsonOptions = context.HttpContext.RequestServices
-                .GetService<IOptions<Microsoft.AspNetCore.Mvc.JsonOptions>>();
-            var serializerOptions = mvcJsonOptions?.Value?.JsonSerializerOptions ?? JsonSerializerOptions.Default;
-            var json = JsonSerializer.Serialize(okResult.Value, serializerOptions);
-            await cacheService.SetAsync(key, json, TimeSpan.FromSeconds(ttl));
+            var serializerOptions = httpContext.RequestServices
+                .GetService<IOptions<Microsoft.AspNetCore.Mvc.JsonOptions>>()?.Value?.JsonSerializerOptions
+                ?? JsonSerializerOptions.Default;
+            var json = TrySerialize(objectResult.Value, serializerOptions);
+            if (json is not null)
+                await cacheService.SetAsync(key, json, TimeSpan.FromSeconds(ResolveTtl(httpContext)));
         }
     }
 
@@ -89,13 +127,19 @@ public sealed class CacheAttribute : Attribute, IAsyncActionFilter, IEndpointFil
     /// <inheritdoc />
     public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
     {
-        var cacheService = context.HttpContext.RequestServices.GetService<ICacheService>();
+        var httpContext = context.HttpContext;
+        if (!IsCacheableMethod(httpContext.Request.Method))
+            return await next(context);
+
+        var cacheService = httpContext.RequestServices.GetService<ICacheService>();
         if (cacheService is null)
             return await next(context);
 
-        var redisOptions = context.HttpContext.RequestServices.GetService<RedisOptions>() ?? new RedisOptions();
-        var ttl = Seconds > 0 ? Seconds : redisOptions.DefaultTTL;
-        var key = CacheKeyGenerator.Generate(CustomKey, context, userSegment: null);
+        var scope = CacheUserScopeResolver.Resolve(httpContext, UserScope);
+        if (!scope.CanCache)
+            return await next(context);
+
+        var key = CacheKeyGenerator.Generate(CustomKey, context, scope.UserSegment);
         if (key is null)
             return await next(context);
 
@@ -105,20 +149,65 @@ public sealed class CacheAttribute : Attribute, IAsyncActionFilter, IEndpointFil
 
         var result = await next(context);
 
-        if (result is not null)
+        var valueToCache = GetCacheableValue(result);
+        if (valueToCache is not null)
         {
-            // Extract the underlying value when the result wraps it (IValueHttpResult)
-            var valueToCache = result is IValueHttpResult valueResult ? valueResult.Value : result;
-            if (valueToCache is not null)
-            {
-                var httpJsonOptions = context.HttpContext.RequestServices
-                    .GetService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>();
-                var serializerOptions = httpJsonOptions?.Value?.SerializerOptions ?? JsonSerializerOptions.Default;
-                var json = JsonSerializer.Serialize(valueToCache, serializerOptions);
-                await cacheService.SetAsync(key, json, TimeSpan.FromSeconds(ttl));
-            }
+            var serializerOptions = httpContext.RequestServices
+                .GetService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()?.Value?.SerializerOptions
+                ?? JsonSerializerOptions.Default;
+            var json = TrySerialize(valueToCache, serializerOptions);
+            if (json is not null)
+                await cacheService.SetAsync(key, json, TimeSpan.FromSeconds(ResolveTtl(httpContext)));
         }
 
         return result;
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private static bool IsCacheableMethod(string method)
+        => HttpMethods.IsGet(method) || HttpMethods.IsHead(method);
+
+    private int ResolveTtl(HttpContext httpContext)
+    {
+        if (Seconds > 0)
+            return Seconds;
+        var redisOptions = httpContext.RequestServices.GetService<RedisOptions>() ?? new RedisOptions();
+        return redisOptions.DefaultTTL;
+    }
+
+    /// <summary>
+    /// Returns the value to store for a minimal API result, or null when it must not be cached.
+    /// Nested results are unwrapped; only a 200 (or status-less) value result or a plain non-string
+    /// value qualifies.
+    /// </summary>
+    private static object? GetCacheableValue(object? result)
+    {
+        var current = result;
+        while (current is INestedHttpResult nested)
+            current = nested.Result;
+
+        return current switch
+        {
+            null => null,
+            IResult httpResult => httpResult is IValueHttpResult { Value: { } value }
+                                  && (httpResult as IStatusCodeHttpResult)?.StatusCode is null or StatusCodes.Status200OK
+                ? value
+                : null,
+            string => null,
+            _ => current
+        };
+    }
+
+    private static string? TrySerialize(object value, JsonSerializerOptions options)
+    {
+        try
+        {
+            return JsonSerializer.Serialize(value, options);
+        }
+        catch (Exception ex) when (ex is JsonException or NotSupportedException or InvalidOperationException)
+        {
+            return null;
+        }
     }
 }
