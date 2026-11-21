@@ -8,7 +8,8 @@
         <!-- NuGet Package Metadata -->
         <!-- Version is overridden by /p:Version= during CI releases (driven by git tag). -->
         <PackageId>BoricuaCoder.API.CoreSetup</PackageId>
-        <Version>0.0.0-local</Version>
+        <!-- The local fallback must stay >= PackageValidationBaselineVersion; bump it after each release. -->
+        <Version>1.5.0-local</Version>
         <Authors>BoricuaCoder</Authors>
         <Company>BoricuaCoder</Company>
         <Description>A lightweight library that simplifies ASP.NET Core API setup with pre-configured JWT Bearer authentication, Swagger/OpenAPI documentation with OAuth2 support, and optional Redis response caching (including per-user response caching). Configure everything via appsettings.json with just two lines of code.</Description>
