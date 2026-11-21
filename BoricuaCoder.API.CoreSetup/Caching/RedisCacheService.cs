@@ -46,6 +46,11 @@ internal sealed class RedisCacheService : ICacheService
             var json = await redisTask;
             return json is null ? default : JsonSerializer.Deserialize<T>(json, _serializerOptions);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            LogCancelled(nameof(GetAsync), key);
+            return default;
+        }
         catch (Exception ex)
         {
             LogFailure(ex, nameof(GetAsync), key);
@@ -64,6 +69,10 @@ internal sealed class RedisCacheService : ICacheService
             };
             var redisTask = _cache.SetStringAsync($"{_options.PrefixKey}{key}", json, entryOptions, ct);
             await WaitWithShortCircuit(redisTask, nameof(SetAsync), key, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            LogCancelled(nameof(SetAsync), key);
         }
         catch (Exception ex)
         {
@@ -85,6 +94,11 @@ internal sealed class RedisCacheService : ICacheService
             var keys = await ScanAsync(fullPattern, ct);
             return keys;
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            LogCancelled(nameof(GetKeysAsync), pattern);
+            return [];
+        }
         catch (Exception ex)
         {
             LogFailure(ex, nameof(GetKeysAsync), pattern);
@@ -97,6 +111,10 @@ internal sealed class RedisCacheService : ICacheService
         try
         {
             await _cache.RemoveAsync($"{_options.PrefixKey}{key}", ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            LogCancelled(nameof(DeleteAsync), key);
         }
         catch (Exception ex)
         {
@@ -121,6 +139,10 @@ internal sealed class RedisCacheService : ICacheService
             _logger.LogInformation(
                 "CoreSetup: DeleteAllAsync removed {Count} cache keys under the configured prefix.", deleted);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            LogCancelled(nameof(DeleteAllAsync), "*");
+        }
         catch (Exception ex)
         {
             LogFailure(ex, nameof(DeleteAllAsync), "*");
@@ -143,6 +165,10 @@ internal sealed class RedisCacheService : ICacheService
 
             var keys = await ScanAsync(EscapeGlob(_options.PrefixKey + keySegment) + ":*", ct);
             await DeleteInBatchesAsync(keys, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            LogCancelled(nameof(DeleteCascadeAsync), keySegment);
         }
         catch (Exception ex)
         {
@@ -177,8 +203,16 @@ internal sealed class RedisCacheService : ICacheService
         var database = _multiplexer.GetDatabase().Database;
         var keys = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var server in _multiplexer.GetServers().Where(s => s.IsConnected && !s.IsReplica))
+        foreach (var server in _multiplexer.GetServers().Where(s => !s.IsReplica))
         {
+            if (!server.IsConnected)
+            {
+                _logger.LogWarning(
+                    "CoreSetup: Redis primary {EndPoint} is not connected; its keys were not scanned.",
+                    server.EndPoint);
+                continue;
+            }
+
             await foreach (var key in server.KeysAsync(database, pattern).WithCancellation(ct))
                 keys.Add(key.ToString());
         }
@@ -194,15 +228,28 @@ internal sealed class RedisCacheService : ICacheService
         var db = _multiplexer.GetDatabase();
         long deleted = 0;
 
-        foreach (var chunk in keys.Chunk(DeleteBatchSize))
+        // Multi-key DEL must stay within one hash slot on Redis Cluster (CROSSSLOT otherwise),
+        // so batch per slot. On a standalone server every key maps to the same group.
+        var bySlot = keys
+            .Select(k => (RedisKey)k)
+            .GroupBy(k => _multiplexer.HashSlot(k));
+
+        foreach (var slotGroup in bySlot)
         {
-            ct.ThrowIfCancellationRequested();
-            var batch = Array.ConvertAll(chunk, k => (RedisKey)k);
-            deleted += await db.KeyDeleteAsync(batch);
+            foreach (var batch in slotGroup.Chunk(DeleteBatchSize))
+            {
+                ct.ThrowIfCancellationRequested();
+                deleted += await db.KeyDeleteAsync(batch);
+            }
         }
 
         return deleted;
     }
+
+    private void LogCancelled(string operation, string key) =>
+        _logger.LogDebug(
+            "CoreSetup: Redis cache {Operation} for key '{Key}' was cancelled by the caller.",
+            operation, key);
 
     private void LogFailure(Exception ex, string operation, string key) =>
         _logger.LogWarning(ex,

@@ -35,7 +35,7 @@ public class RedisCacheServiceTests
         _multiplexer.GetServers().Returns([_server]);
         _multiplexer.GetDatabase(Arg.Any<int>(), Arg.Any<object?>()).Returns(_database);
 
-        _loggerFactory = LoggerFactory.Create(b => b.AddProvider(new TestLoggerProvider(_logs)));
+        _loggerFactory = LoggerFactory.Create(b => b.SetMinimumLevel(LogLevel.Debug).AddProvider(new TestLoggerProvider(_logs)));
     }
 
     private RedisCacheService CreateService(RedisOptions? options = null, IDistributedCache? cache = null)
@@ -235,8 +235,72 @@ public class RedisCacheServiceTests
             Arg.Is<RedisKey[]>(k => k.Length == 3), Arg.Any<CommandFlags>());
         _server.Received(1).KeysAsync(Arg.Any<int>(), (RedisValue)"test::*",
             Arg.Any<int>(), Arg.Any<long>(), Arg.Any<int>(), Arg.Any<CommandFlags>());
-        Assert.Contains(_logs.GetSnapshot(), r => r.Level == LogLevel.Information
-            && r.Message.StartsWith("CoreSetup:") && r.Message.Contains('3'));
+        var info = Assert.Single(_logs.GetSnapshot(), r => r.Level == LogLevel.Information);
+        Assert.Equal("CoreSetup: DeleteAllAsync removed 3 cache keys under the configured prefix.", info.Message);
+    }
+
+    [Fact]
+    public async Task DeleteAllAsync_GroupsBatchesByHashSlot()
+    {
+        RedisKey[] stored = ["test::a1", "test::b1", "test::a2", "test::b2", "test::a3"];
+        _server.KeysAsync(Arg.Any<int>(), Arg.Any<RedisValue>(),
+                Arg.Any<int>(), Arg.Any<long>(), Arg.Any<int>(), Arg.Any<CommandFlags>())
+            .Returns(AsyncKeys(stored));
+        _multiplexer.HashSlot(Arg.Any<RedisKey>())
+            .Returns(ci => ci.Arg<RedisKey>().ToString().StartsWith("test::a") ? 100 : 200);
+        var batches = new List<string[]>();
+        _database.KeyDeleteAsync(Arg.Do<RedisKey[]>(k => batches.Add(k.Select(x => x.ToString()).ToArray())),
+                Arg.Any<CommandFlags>())
+            .Returns(ci => (long)ci.Arg<RedisKey[]>().Length);
+        var service = CreateService();
+
+        await service.DeleteAllAsync();
+
+        Assert.Equal(2, batches.Count);
+        Assert.Contains(batches, b => b.Order().SequenceEqual(["test::a1", "test::a2", "test::a3"]));
+        Assert.Contains(batches, b => b.Order().SequenceEqual(["test::b1", "test::b2"]));
+        var info = Assert.Single(_logs.GetSnapshot(), r => r.Level == LogLevel.Information);
+        Assert.Equal("CoreSetup: DeleteAllAsync removed 5 cache keys under the configured prefix.", info.Message);
+    }
+
+    [Fact]
+    public async Task DeleteAllAsync_CancelledToken_LogsNoWarning()
+    {
+        _server.KeysAsync(Arg.Any<int>(), Arg.Any<RedisValue>(),
+                Arg.Any<int>(), Arg.Any<long>(), Arg.Any<int>(), Arg.Any<CommandFlags>())
+            .Returns(AsyncKeys(["test::k1"]));
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+        var service = CreateService();
+
+        var exception = await Record.ExceptionAsync(() => service.DeleteAllAsync(cts.Token));
+
+        Assert.Null(exception);
+        Assert.Empty(Warnings());
+        await _database.DidNotReceiveWithAnyArgs().KeyDeleteAsync(default(RedisKey[])!, default);
+        Assert.Contains(_logs.GetSnapshot(), r => r.Level == LogLevel.Debug && r.Message.Contains("DeleteAllAsync"));
+    }
+
+    [Fact]
+    public async Task DeleteAllAsync_DisconnectedPrimary_LogsWarningAndScansTheRest()
+    {
+        var connected = CreateServer(isReplica: false, "test::k1");
+        var disconnected = CreateServer(isReplica: false, "test::k2");
+        disconnected.IsConnected.Returns(false);
+        disconnected.EndPoint.Returns(new System.Net.DnsEndPoint("redis-b", 6379));
+        var disconnectedReplica = CreateServer(isReplica: true);
+        disconnectedReplica.IsConnected.Returns(false);
+        _multiplexer.GetServers().Returns([connected, disconnected, disconnectedReplica]);
+        _database.KeyDeleteAsync(Arg.Any<RedisKey[]>(), Arg.Any<CommandFlags>()).Returns(1L);
+        var service = CreateService();
+
+        await service.DeleteAllAsync();
+
+        disconnected.DidNotReceiveWithAnyArgs().KeysAsync(default, default, default, default, default, default);
+        var warning = Assert.Single(Warnings());
+        Assert.Equal(
+            $"CoreSetup: Redis primary {disconnected.EndPoint} is not connected; its keys were not scanned.",
+            warning.Message);
     }
 
     [Fact]
@@ -453,6 +517,23 @@ public class RedisCacheServiceTests
 
         Assert.Null(exception);
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(2), $"took {sw.Elapsed}");
+    }
+
+    [Fact]
+    public async Task GetAsync_CancelledToken_ReturnsDefaultAndLogsNoWarning()
+    {
+        var cache = Substitute.For<IDistributedCache>();
+        cache.GetAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(ci => Task.FromCanceled<byte[]?>(ci.Arg<CancellationToken>()));
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+        var service = CreateService(new RedisOptions { PrefixKey = "test::", ShortCircuit = 5 }, cache);
+
+        var result = await service.GetAsync<string>("k0", cts.Token);
+
+        Assert.Null(result);
+        Assert.Empty(Warnings());
+        Assert.Contains(_logs.GetSnapshot(), r => r.Level == LogLevel.Debug && r.Message.Contains("GetAsync"));
     }
 
     [Fact]
