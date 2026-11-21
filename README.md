@@ -844,12 +844,35 @@ The sample demonstrates:
 - `/users/{userId}/permissions` — same `UserInfo` custom key; `DeleteCascadeAsync("UserInfo:{userId}")` removes both
 - Full `appsettings.json` and `appsettings.Development.json` with all available options including Redis
 
+## Publishing setup (maintainers)
+
+The release workflow (`.github/workflows/release.yml`) publishes to nuget.org with NuGet Trusted Publishing (GitHub OIDC), so no API key secret is needed. Do this once, before the first tag:
+
+1. **nuget.org Trusted Publishing policy.** On nuget.org, open your username menu > **Trusted Publishing** > **Create policy** and set:
+   - **Repository owner**: `nemesis312`
+   - **Repository**: `BoricuaCoder.API.CoreSetup`
+   - **Workflow file**: `release.yml` (the file name only, not the path)
+   - **Environment**: `nuget-release`
+
+   The policy owner must be the account that owns the package.
+2. **Actions variable `NUGET_USER`.** In the GitHub repo, go to **Settings** > **Secrets and variables** > **Actions** > **Variables** and add `NUGET_USER`. The value is the nuget.org profile name, not the email.
+3. **Environment `nuget-release`.** Go to **Settings** > **Environments** and create it. Add a required reviewer, then under **Deployment branches and tags** choose **Selected branches and tags** and add the tag rule `v*`.
+4. **Tag ruleset.** Go to **Settings** > **Rules** > **Rulesets** > **New tag ruleset**, target `v*`, and restrict creations, updates and deletions. Set the bypass list to **Repository admin** only.
+5. **The environment that holds `CODECOV_TOKEN`** must allow tag refs (`v*`), because the `ci` job runs on the release tag.
+
 ## Releasing
 
 Maintainer checklist for a new version:
 
 1. Add a `## [x.y.z] - YYYY-MM-DD` section to `CHANGELOG.md`. The release workflow publishes that section as the release notes and fails without it.
-2. Merge to `main`, then tag the merge commit `vx.y.z` and push the tag. The workflow refuses tags that are not on `main` or are not a SemVer version, and waits for approval in the `nuget-release` environment.
+2. Merge to `main`, then tag the merge commit `vx.y.z` and push the tag. The workflow refuses tags that are not on `main` or are not a SemVer version, and waits for approval in the `nuget-release` environment. Approve the deployment in the **Actions** tab.
+
+   ```bash
+   git checkout main && git pull
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
+   ```
+
 3. After the release, bump the csproj `<Version>` fallback to the next `-local` version (e.g. `x.y.(z+1)-local`) and set `PackageValidationBaselineVersion` to the version just released.
 
 ## Requirements

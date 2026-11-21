@@ -114,12 +114,12 @@ That's it! Your API now has:
 
 All properties are optional. Set only the ones you need to override — `null` keeps the JWT Bearer handler's default behavior. Each value you set changes only that property of the handler's default `TokenValidationParameters`, so anything you configure with `Configure`/`PostConfigure<JwtBearerOptions>` is kept. Setting `ValidateIssuer`, `ValidateAudience` or `ValidateLifetime` to `false` logs a startup warning.
 
-| Property           | Type  | Default | Description                                                                        |
-| ------------------ | ----- | ------- | ---------------------------------------------------------------------------------- |
-| `ValidateIssuer`   | bool? | `null`  | Override issuer validation. Set to `false` when using multiple issuers             |
-| `ValidateAudience` | bool? | `null`  | Override audience validation                                                       |
-| `ValidateLifetime` | bool? | `null`  | Override lifetime/expiration validation                                            |
-| `ClockSkewSeconds` | int?  | `null`  | Override clock skew tolerance. Default is 300 (5 min). Set to `0` for exact expiry |
+| Property            | Type  | Default | Description                                                                          |
+| ------------------- | ----- | ------- | ------------------------------------------------------------------------------------ |
+| `ValidateIssuer`    | bool? | `null`  | Override issuer validation. Set to `false` when using multiple issuers              |
+| `ValidateAudience`  | bool? | `null`  | Override audience validation                                                         |
+| `ValidateLifetime`  | bool? | `null`  | Override lifetime/expiration validation                                              |
+| `ClockSkewSeconds`  | int?  | `null`  | Override clock skew tolerance. Default is 300 (5 min). Set to `0` for exact expiry  |
 
 ### ValidAlgorithms
 
@@ -659,7 +659,6 @@ The settings CoreSetup applies itself (the Swagger UI route prefix, JSON endpoin
 ```
 
 > **Tip:** Enable debug logging to see what the library configured at startup:
->
 > ```json
 > "Logging": { "LogLevel": { "BoricuaCoder.API.CoreSetup": "Debug" } }
 > ```
@@ -836,7 +835,6 @@ dotnet run
 ```
 
 The sample demonstrates:
-
 - `AddCoreSetup()` and `UseCoreSetup()` wired up in `Program.cs`
 - A public `/health` endpoint (no auth required)
 - A protected `/me` endpoint that returns the caller's JWT claims
