@@ -94,6 +94,25 @@ public static class ApplicationBuilderExtensions
             logger.LogWarning(
                 "CoreSetup: RequireHttpsMetadata is disabled for Authority={Authority}. Do not use this setting in production.",
                 authority);
+
+        if (string.IsNullOrEmpty(jwt.Authority))
+            logger.LogWarning("CoreSetup: Jwt:Authority is not set; every bearer token will be rejected.");
+
+        if (string.Equals(jwt.Audience, "account", StringComparison.OrdinalIgnoreCase))
+            logger.LogWarning(
+                "CoreSetup: Jwt:Audience is 'account'. Keycloak adds this audience to tokens of most clients in the realm, so tokens issued for other applications will be accepted. Configure an audience mapper with this API's client id.");
+
+        var tv = jwt.TokenValidation;
+        LogDisabledValidation(logger, nameof(tv.ValidateIssuer), tv.ValidateIssuer);
+        LogDisabledValidation(logger, nameof(tv.ValidateAudience), tv.ValidateAudience);
+        LogDisabledValidation(logger, nameof(tv.ValidateLifetime), tv.ValidateLifetime);
+    }
+
+    private static void LogDisabledValidation(ILogger logger, string name, bool? value)
+    {
+        if (value == false)
+            logger.LogWarning(
+                "CoreSetup: Jwt:TokenValidation:{Name} is disabled. Do not use this setting in production.", name);
     }
 
     private static void LogRedisConfiguration(ILogger logger, RedisOptions redis)

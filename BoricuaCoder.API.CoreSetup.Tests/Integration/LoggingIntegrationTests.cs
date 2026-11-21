@@ -96,6 +96,61 @@ public class LoggingIntegrationTests : IAsyncLifetime
         Assert.DoesNotContain(warnings, m => m.Contains("Swagger UI is enabled in"));
     }
 
+    // ── JWT misconfiguration warnings ──
+
+    private const string AudienceAccountWarning =
+        "CoreSetup: Jwt:Audience is 'account'. Keycloak adds this audience to tokens of most clients in the realm, so tokens issued for other applications will be accepted. Configure an audience mapper with this API's client id.";
+
+    private const string EmptyAuthorityWarning =
+        "CoreSetup: Jwt:Authority is not set; every bearer token will be rejected.";
+
+    private static List<string> JwtWarnings(string key, string value)
+    {
+        var config = new Dictionary<string, string?>(IntegrationTestBase.DefaultConfig) { [key] = value };
+
+        using var app = IntegrationTestBase.BuildAppWithTestLogging(out var collector, config);
+
+        return collector.GetSnapshot()
+            .Where(r => r.Category == CoreSetupExtensions.LogCategory && r.Level == LogLevel.Warning)
+            .Select(r => r.Message)
+            .ToList();
+    }
+
+    [Fact]
+    public void UseCoreSetup_AudienceAccount_LogsWarning()
+    {
+        var warnings = JwtWarnings("CoreSetup:Jwt:Audience", "Account");
+
+        Assert.Single(warnings, m => m == AudienceAccountWarning);
+    }
+
+    [Fact]
+    public void UseCoreSetup_EmptyAuthority_LogsWarning()
+    {
+        var warnings = JwtWarnings("CoreSetup:Jwt:Authority", "");
+
+        Assert.Single(warnings, m => m == EmptyAuthorityWarning);
+    }
+
+    [Fact]
+    public void UseCoreSetup_ValidateAudienceFalse_LogsWarning()
+    {
+        var warnings = JwtWarnings("CoreSetup:Jwt:TokenValidation:ValidateAudience", "false");
+
+        Assert.Single(warnings, m =>
+            m == "CoreSetup: Jwt:TokenValidation:ValidateAudience is disabled. Do not use this setting in production.");
+    }
+
+    [Fact]
+    public void UseCoreSetup_DefaultJwtConfig_NoJwtWarnings()
+    {
+        var warnings = _collector.GetSnapshot()
+            .Where(r => r.Category == CoreSetupExtensions.LogCategory && r.Level == LogLevel.Warning)
+            .Select(r => r.Message);
+
+        Assert.DoesNotContain(warnings, m => m.Contains("Jwt:"));
+    }
+
     // ── Redis startup warnings (connection is lazy, so no server is needed) ──
 
     private const string EmptyPrefixWarning =

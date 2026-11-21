@@ -24,6 +24,13 @@ public sealed class JwtOptions
     /// Fine-grained token validation overrides. Only properties that are explicitly set will override the JWT Bearer defaults.
     /// </summary>
     public TokenValidationOptions TokenValidation { get; init; } = new();
+
+    /// <summary>
+    /// Opt-in allow-list of signing algorithms accepted for incoming tokens, for example
+    /// <c>["RS256","PS256","ES256"]</c>. An empty array (the default) keeps the JWT Bearer handler default,
+    /// which accepts any algorithm the signing key supports.
+    /// </summary>
+    public string[] ValidAlgorithms { get; init; } = [];
 }
 
 /// <summary>
