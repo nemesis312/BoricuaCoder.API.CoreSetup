@@ -31,7 +31,8 @@ public static class ServiceCollectionExtensions
         services.AddJwtAuthentication(options.Jwt);
         services.AddSwaggerWithOAuth(options.Swagger);
 
-        if (options.Redis.Enabled)
+        // With an empty connection string the validator reports the error at start instead.
+        if (options.Redis.Enabled && !string.IsNullOrWhiteSpace(options.Redis.ConnectionString))
             services.AddRedisCache(options.Redis);
 
         services.AddOptions<CoreSetupOptions>()

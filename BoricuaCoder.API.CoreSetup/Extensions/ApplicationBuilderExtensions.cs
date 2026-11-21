@@ -1,5 +1,6 @@
 using BoricuaCoder.API.CoreSetup.Caching;
 using BoricuaCoder.API.CoreSetup.Options;
+using BoricuaCoder.API.CoreSetup.Setup;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -90,6 +91,15 @@ public static class ApplicationBuilderExtensions
             string.IsNullOrEmpty(redis.PrefixKey) ? "(none)" : redis.PrefixKey,
             redis.DefaultTTL,
             redis.ShortCircuit > 0 ? redis.ShortCircuit.ToString() : "disabled");
+
+        if (string.IsNullOrEmpty(redis.PrefixKey))
+            logger.LogWarning(
+                "CoreSetup: Redis PrefixKey is empty. Cache keys share the database namespace with other apps and DeleteAllAsync is disabled. Set CoreSetup:Redis:PrefixKey.");
+
+        // Never log the connection string: it can carry a password.
+        if (!string.IsNullOrWhiteSpace(redis.ConnectionString) && RedisSetup.IsInsecureRemote(redis.ConnectionString))
+            logger.LogWarning(
+                "CoreSetup: Redis connection to a non-loopback host does not use TLS (ssl=true). Credentials and cached responses travel in plain text.");
     }
 
     private static void LogSwaggerConfiguration(ILogger logger, SwaggerOptions swagger)

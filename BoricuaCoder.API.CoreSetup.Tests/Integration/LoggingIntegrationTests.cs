@@ -68,6 +68,59 @@ public class LoggingIntegrationTests : IAsyncLifetime
 
         Assert.Single(oauthLogs);
     }
+
+    // ── Redis startup warnings (connection is lazy, so no server is needed) ──
+
+    private const string EmptyPrefixWarning =
+        "CoreSetup: Redis PrefixKey is empty. Cache keys share the database namespace with other apps and DeleteAllAsync is disabled. Set CoreSetup:Redis:PrefixKey.";
+
+    private const string InsecureRemoteWarning =
+        "CoreSetup: Redis connection to a non-loopback host does not use TLS (ssl=true). Credentials and cached responses travel in plain text.";
+
+    [Fact]
+    public void UseCoreSetup_EmptyPrefixKey_LogsWarning()
+    {
+        var warnings = RedisWarnings("localhost:6379", prefixKey: "");
+
+        Assert.Single(warnings, m => m == EmptyPrefixWarning);
+    }
+
+    [Fact]
+    public void UseCoreSetup_RemoteRedisWithoutSsl_LogsWarning()
+    {
+        const string connectionString = "redis.example.com:6379,password=s3cret";
+
+        var warnings = RedisWarnings(connectionString, prefixKey: "app::");
+
+        Assert.Single(warnings, m => m == InsecureRemoteWarning);
+        Assert.DoesNotContain(warnings, m => m.Contains("s3cret") || m.Contains("redis.example.com"));
+        Assert.DoesNotContain(warnings, m => m == EmptyPrefixWarning);
+    }
+
+    [Fact]
+    public void UseCoreSetup_LocalhostRedis_NoTlsWarning()
+    {
+        var warnings = RedisWarnings("localhost:6379", prefixKey: "app::");
+
+        Assert.DoesNotContain(warnings, m => m == InsecureRemoteWarning);
+    }
+
+    private static List<string> RedisWarnings(string connectionString, string prefixKey)
+    {
+        var config = new Dictionary<string, string?>(IntegrationTestBase.DefaultConfig)
+        {
+            ["CoreSetup:Redis:Enabled"] = "true",
+            ["CoreSetup:Redis:ConnectionString"] = connectionString,
+            ["CoreSetup:Redis:PrefixKey"] = prefixKey
+        };
+
+        using var app = IntegrationTestBase.BuildAppWithTestLogging(out var collector, config);
+
+        return collector.GetSnapshot()
+            .Where(r => r.Category == CoreSetupExtensions.LogCategory && r.Level == LogLevel.Warning)
+            .Select(r => r.Message)
+            .ToList();
+    }
 }
 
 public class LoggingSwaggerDisabledTests : IAsyncLifetime
