@@ -147,7 +147,7 @@ Keycloak signs access tokens with `RS256` unless you change the realm's default 
 | `RoutePrefix` | string | `"swagger"` | URL prefix for the UI (`/swagger`) and the JSON (`/swagger/v1/swagger.json`). `""` serves the UI at the site root |
 | `OAuth`       | object |             | OAuth2 configuration for Swagger authentication                                                                   |
 
-> A custom `RoutePrefix` such as `api-docs` serves the UI at `/api-docs` and the JSON at `/api-docs/v1/swagger.json`. Before 1.5.0 the JSON stayed under `/swagger`, so the UI failed to load it.
+> A custom `RoutePrefix` such as `api-docs` serves the UI at `/api-docs` and the JSON at `/api-docs/v1/swagger.json`. Before 1.5.0 the JSON stayed under `/swagger`, so the UI failed to load it. Spaces and leading or trailing slashes are trimmed, so `/api-docs/` and ` api-docs ` behave like `api-docs`.
 
 ### SwaggerOAuthOptions
 
@@ -190,7 +190,7 @@ By default a cached response is kept **per user** whenever the request is authen
 | `UserScope`      | Behavior                                                                                                                                                                         |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Auto` (default) | Per-user when the request is authenticated or the endpoint requires authorization (`[Authorize]`, `.RequireAuthorization()`). Shared for anonymous requests to public endpoints. |
-| `PerUser`        | Always per-user. Anonymous requests share a single `u-anon` entry.                                                                                                               |
+| `PerUser`        | Always per-user. Anonymous requests share a single `%a` entry.                                                                                                                   |
 | `Shared`         | One entry for every caller, authenticated or not.                                                                                                                                |
 
 > **Use `Shared` only for data that is identical for every caller**, such as a public catalog or reference data. On an endpoint that returns user-specific or permission-filtered data, `Shared` serves the first caller's response to everyone.
@@ -203,31 +203,37 @@ By default a cached response is kept **per user** whenever the request is authen
 .AddEndpointFilter(new CacheAttribute(600) { UserScope = CacheUserScope.Shared })
 ```
 
-The user segment is `u-` followed by the first 32 hex characters of the SHA-256 hash of the `sub` claim (or `ClaimTypes.NameIdentifier` when there is no `sub`), so the raw user id never appears in the key. An authenticated request with neither claim is **never cached**.
+The per-user scope marker is `%u` followed by the first 32 hex characters of the SHA-256 hash of the `sub` claim (or `ClaimTypes.NameIdentifier` when there is no `sub`), so the raw user id never appears in the key. An authenticated request with neither claim is **never cached**.
+
+> **Keys vary only by the bound arguments and the user.** Values the handler reads from `HttpContext` itself, such as `Host`, other request headers, cookies or `Accept-Language`, are not part of the key. An endpoint that is multi-tenant by host or personalized by a header must take those values as bound parameters (for example `[FromHeader(Name = "X-Tenant")] string tenant`), or must not use `[Cache]`.
 
 ### How cache keys are built
 
-|                  | Key layout                                                    |
-| ---------------- | ------------------------------------------------------------- |
-| No `customKey`   | `{PrefixKey}{endpointId}:{args...}:{userSegment}`             |
-| With `customKey` | `{PrefixKey}{customKey}:{args...}:{endpointId}:{userSegment}` |
+|                  | Key layout                                              |
+| ---------------- | ------------------------------------------------------- |
+| No `customKey`   | `{PrefixKey}{endpointId}:{args...}:{scope}`             |
+| With `customKey` | `{PrefixKey}{customKey}:{args...}:{endpointId}:{scope}` |
 
-- **`endpointId`**: `{Controller}::{Action}` for MVC (e.g. `Users::Get`). For Minimal APIs, the endpoint name set with `.WithName(...)`; without a name, the route pattern with `/` replaced by `_`, URI-escaped (`/users/{userId}` becomes `users_%7BuserId%7D`). Use `.WithName(...)` to get readable keys.
+- **`endpointId`**: a readable name followed by `%i` and 8 hex characters that identify the endpoint. The readable name is `{Controller}::{Action}` for MVC (e.g. `Users::Get%i…`). For Minimal APIs it is the endpoint name set with `.WithName(...)`; without a name, the route pattern with `/` replaced by `_`, URI-escaped (`/users/{userId}` becomes `users_%7BuserId%7D%i…`). Use `.WithName(...)` to get readable keys. The `%i` hash covers the area, controller type, method and parameter types (MVC), or the route pattern, handler method and `RequireHost` hosts (Minimal APIs), so two controllers named `UsersController` in different namespaces or areas never share keys.
 - **`args`**: the action or handler arguments in parameter order, URI-escaped. `null` becomes `%` and an empty string `%e`. Complex objects (DTOs) and strings longer than 64 characters become `%h` plus a SHA-256 hash. Services injected from DI, `HttpContext`, `ClaimsPrincipal` and `CancellationToken` are left out. An injected `IEnumerable<IMyService>` needs `[FromServices]` to be left out. MVC `[BindProperty]` controller properties are not part of the key.
-- **`userSegment`**: `u-…` for per-user entries, `u-anon` for anonymous `PerUser` requests, omitted for shared entries.
+- **`scope`**: always the last segment and always present. `%u` plus 32 hex characters for per-user entries, `%a` for anonymous `PerUser` requests, `%s` for shared entries.
+- Every marker (`%`, `%e`, `%h`, `%i`, `%u`, `%a`, `%s`) starts with `%`. Arguments are URI-escaped, so a literal `%` becomes `%25` and no argument can forge an endpoint id or a scope.
+- **Short string arguments are stored in clear text.** A string of up to 64 characters appears as-is (URI-escaped) in the Redis key name, where anyone with `SCAN`, `KEYS` or `MONITOR` access can read it. Do not cache endpoints that take secrets (tokens, passwords, API keys) as arguments.
 - Keys longer than 512 characters have their arguments hashed, then the endpoint id and the custom key if the key is still too long.
 
-| Example (`PrefixKey` = `myapp:api::`, authenticated caller)                                             | Generated key                                      |
-| ------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `[Cache(300)]` on `ProductsController.GetAll(page=1)` (`[Authorize]`)                                   | `myapp:api::Products::GetAll:1:u-…`                |
-| `[Cache(60, "UserInfo")]` on `UsersController.Get(id=42)`                                               | `myapp:api::UserInfo:42:Users::Get:u-…`            |
-| `[Cache(120, "UserInfo")]` on `UsersController.GetPermissions(id=42)`                                   | `myapp:api::UserInfo:42:Users::GetPermissions:u-…` |
-| `new CacheAttribute(60, "UserInfo")` on `GET /users/42`, `.WithName("GetUser")`                         | `myapp:api::UserInfo:42:GetUser:u-…`               |
-| `new CacheAttribute(120, "UserInfo")` on `GET /users/42/permissions`, `.WithName("GetUserPermissions")` | `myapp:api::UserInfo:42:GetUserPermissions:u-…`    |
-| `new CacheAttribute(300)` on `GET /users/42` without `.WithName(...)`                                   | `myapp:api::users_%7BuserId%7D:42:u-…`             |
-| `new CacheAttribute(600) { UserScope = CacheUserScope.Shared }` on a route named `"GetCatalog"`         | `myapp:api::GetCatalog`                            |
+| Example (`PrefixKey` = `myapp:api::`, authenticated caller)                                             | Generated key                                         |
+| ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `[Cache(300)]` on `ProductsController.GetAll(page=1)` (`[Authorize]`)                                   | `myapp:api::Products::GetAll%i…:1:%u…`                |
+| `[Cache(60, "UserInfo")]` on `UsersController.Get(id=42)`                                               | `myapp:api::UserInfo:42:Users::Get%i…:%u…`            |
+| `[Cache(120, "UserInfo")]` on `UsersController.GetPermissions(id=42)`                                   | `myapp:api::UserInfo:42:Users::GetPermissions%i…:%u…` |
+| `new CacheAttribute(60, "UserInfo")` on `GET /users/42`, `.WithName("GetUser")`                         | `myapp:api::UserInfo:42:GetUser%i…:%u…`               |
+| `new CacheAttribute(120, "UserInfo")` on `GET /users/42/permissions`, `.WithName("GetUserPermissions")` | `myapp:api::UserInfo:42:GetUserPermissions%i…:%u…`    |
+| `new CacheAttribute(300)` on `GET /users/42` without `.WithName(...)`                                   | `myapp:api::users_%7BuserId%7D%i…:42:%u…`             |
+| `new CacheAttribute(600) { UserScope = CacheUserScope.Shared }` on a route named `"GetCatalog"`         | `myapp:api::GetCatalog%i…:%s`                         |
 
 Because the `customKey` and the arguments come first, both `UserInfo` endpoints store user 42 under `UserInfo:42:…`, and a single `DeleteCascadeAsync("UserInfo:42")` removes both entries for every user. Without a `customKey` the key starts with the endpoint id, so there is no shared parent to cascade on: use a `customKey` for entries you need to invalidate together.
+
+> **Build cascade segments with the same encoding as the keys.** Arguments are URI-escaped in the key, so an entry for `a@b.com` is stored under `UserInfo:a%40b.com:…`. Escape each value when you build the segment: `DeleteCascadeAsync($"UserInfo:{Uri.EscapeDataString(email)}")`. Numbers and plain ASCII ids are unchanged by escaping.
 
 > **Changed in 1.5.0:** the key layout is new, so entries written by 1.4.x are never read again. The cache starts cold after you deploy 1.5.0, and the old entries expire with their TTL.
 
@@ -252,7 +258,7 @@ builder.Services.AddCoreSetup(builder.Configuration);
 var app = builder.Build();
 app.UseCoreSetup();
 
-// Auto key, per user ([Authorize]) — key: "myapp:api::GetProducts:u-…"
+// Auto key, per user ([Authorize]) — key: "myapp:api::GetProducts%i…:%u…"
 app.MapGet("/products", [Authorize] () =>
 {
     return Results.Ok(new[]
@@ -265,21 +271,21 @@ app.MapGet("/products", [Authorize] () =>
 .WithName("GetProducts")
 .WithTags("Products");
 
-// Public data, one entry for every caller — key: "myapp:api::GetCatalog"
+// Public data, one entry for every caller — key: "myapp:api::GetCatalog%i…:%s"
 app.MapGet("/catalog", () => Results.Ok(new[] { "Widget A", "Widget B" }))
 .AllowAnonymous()
 .AddEndpointFilter(new CacheAttribute(600) { UserScope = CacheUserScope.Shared })
 .WithName("GetCatalog")
 .WithTags("Products");
 
-// Custom key with TTL — key: "myapp:api::UserInfo:{userId}:GetUser:u-…"
+// Custom key with TTL — key: "myapp:api::UserInfo:{userId}:GetUser%i…:%u…"
 app.MapGet("/users/{userId}", [Authorize] (int userId) =>
     Results.Ok(new { userId, name = $"User {userId}" }))
 .AddEndpointFilter(new CacheAttribute(60, "UserInfo"))
 .WithName("GetUser")
 .WithTags("Users");
 
-// Same custom key — key: "myapp:api::UserInfo:{userId}:GetUserPermissions:u-…"
+// Same custom key — key: "myapp:api::UserInfo:{userId}:GetUserPermissions%i…:%u…"
 // DeleteCascadeAsync("UserInfo:{userId}") removes this entry and the one above, for every user
 app.MapGet("/users/{userId}/permissions", [Authorize] (int userId) =>
     Results.Ok(new { userId, permissions = new[] { "read", "write" } }))
@@ -306,7 +312,7 @@ public record ProductDto(int Id, string Name);
 [Authorize]
 public class ProductsController : ControllerBase
 {
-    // Auto key, per user — "myapp:api::Products::GetAll:{page}:u-…"
+    // Auto key, per user — "myapp:api::Products::GetAll%i…:{page}:%u…"
     [HttpGet]
     [Cache(300)]
     public IActionResult GetAll(int page = 1)
@@ -318,7 +324,7 @@ public class ProductsController : ControllerBase
         });
     }
 
-    // Custom key, ActionResult<T> — "myapp:api::ProductDetail:{id}:Products::GetById:u-…"
+    // Custom key, ActionResult<T> — "myapp:api::ProductDetail:{id}:Products::GetById%i…:%u…"
     [HttpGet("{id}")]
     [Cache(60, "ProductDetail")]
     public ActionResult<ProductDto> GetById(int id)
@@ -326,7 +332,7 @@ public class ProductsController : ControllerBase
         return new ProductDto(id, $"Widget {id}");
     }
 
-    // Public reference data, one entry for every caller — "myapp:api::Products::GetCategories"
+    // Public reference data, one entry for every caller — "myapp:api::Products::GetCategories%i…:%s"
     [HttpGet("categories")]
     [AllowAnonymous]
     [Cache(3600, UserScope = CacheUserScope.Shared)]
@@ -343,13 +349,13 @@ public class ProductsController : ControllerBase
 [Authorize]
 public class UsersController : ControllerBase
 {
-    // Key: "myapp:api::UserInfo:{id}:Users::Get:u-…"
+    // Key: "myapp:api::UserInfo:{id}:Users::Get%i…:%u…"
     [HttpGet("{id}")]
     [Cache(60, "UserInfo")]
     public IActionResult Get(int id)
         => Ok(new { id, name = $"User {id}" });
 
-    // Key: "myapp:api::UserInfo:{id}:Users::GetPermissions:u-…"
+    // Key: "myapp:api::UserInfo:{id}:Users::GetPermissions%i…:%u…"
     // DeleteCascadeAsync("UserInfo:{id}") removes this entry and the one above
     [HttpGet("{id}/permissions")]
     [Cache(120, "UserInfo")]
@@ -764,7 +770,7 @@ No configuration changes are required after upgrading.
 
 **Symptoms:** `DeleteCascadeAsync("UserInfo:42")` removes the root key but not the child keys.
 
-**Cause:** Only keys that start with the segment are removed. An endpoint without `customKey: "UserInfo"` stores its key under its endpoint id (e.g. `Users::GetRoles:42:u-…`), not under `UserInfo:42`. Give every endpoint you want to invalidate together the same `customKey`, with the id as its first argument. Use `GetKeysAsync("UserInfo:*")` to inspect what is actually stored.
+**Cause:** Only keys that start with the segment are removed. An endpoint without `customKey: "UserInfo"` stores its key under its endpoint id (e.g. `Users::GetRoles%i…:42:%u…`), not under `UserInfo:42`. Give every endpoint you want to invalidate together the same `customKey`, with the id as its first argument. Segments match the escaped form of the arguments: use `Uri.EscapeDataString(id)` when the id can contain characters such as `@`, `:` or spaces. Use `GetKeysAsync("UserInfo:*")` to inspect what is actually stored.
 
 ---
 
@@ -783,6 +789,7 @@ All CoreSetup messages use the `BoricuaCoder.API.CoreSetup` log category and sta
 | `CoreSetup: Swagger UI is enabled in the '{Environment}' environment and exposes the full API surface. It will be disabled by default outside Development in 2.0.0. Set CoreSetup:Swagger:Enabled explicitly.`                | Set `CoreSetup:Swagger:Enabled` to `false` in that environment, or to `true` if you mean to expose it. In 2.0.0 Swagger will be off by default outside Development. |
 | `CoreSetup: Redis PrefixKey is empty. Cache keys share the database namespace with other apps and DeleteAllAsync is disabled. Set CoreSetup:Redis:PrefixKey.`                                                                 | Set a prefix unique to the app and environment, e.g. `myapp:prod::`.                                                                                                |
 | `CoreSetup: Redis connection to a non-loopback host does not use TLS (ssl=true). Credentials and cached responses travel in plain text.`                                                                                      | Add `ssl=true` to the connection string (and the TLS port your Redis provider uses).                                                                                |
+| `CoreSetup: Redis PrefixKey '{PrefixKey}' does not end with ':'. DeleteAllAsync and cascade deletes may also match keys of other apps whose prefix starts with the same text.`                                                | End the prefix with `:` (e.g. `myapp:prod::`). Without a separator, `myapp` also matches the keys of an app whose prefix is `myapp2`.                               |
 
 **At runtime:**
 
@@ -831,11 +838,19 @@ The sample demonstrates:
 - `AddCoreSetup()` and `UseCoreSetup()` wired up in `Program.cs`
 - A public `/health` endpoint (no auth required)
 - A protected `/me` endpoint that returns the caller's JWT claims
-- `/products` — cached per user with `CacheAttribute(300)` (auto key `GetProducts:u-…`)
+- `/products` — cached per user with `CacheAttribute(300)` (auto key `GetProducts%i…:%u…`)
 - `/catalog` — public, cached once for every caller with `UserScope = CacheUserScope.Shared`
-- `/users/{userId}` — cached with `CacheAttribute(60, "UserInfo")` (key `UserInfo:{userId}:GetUser:u-…`)
+- `/users/{userId}` — cached with `CacheAttribute(60, "UserInfo")` (key `UserInfo:{userId}:GetUser%i…:%u…`)
 - `/users/{userId}/permissions` — same `UserInfo` custom key; `DeleteCascadeAsync("UserInfo:{userId}")` removes both
 - Full `appsettings.json` and `appsettings.Development.json` with all available options including Redis
+
+## Releasing
+
+Maintainer checklist for a new version:
+
+1. Add a `## [x.y.z] - YYYY-MM-DD` section to `CHANGELOG.md`. The release workflow publishes that section as the release notes and fails without it.
+2. Merge to `main`, then tag the merge commit `vx.y.z` and push the tag. The workflow refuses tags that are not on `main` or are not a SemVer version, and waits for approval in the `nuget-release` environment.
+3. After the release, bump the csproj `<Version>` fallback to the next `-local` version (e.g. `x.y.(z+1)-local`) and set `PackageValidationBaselineVersion` to the version just released.
 
 ## Requirements
 

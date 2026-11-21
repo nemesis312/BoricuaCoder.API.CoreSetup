@@ -32,7 +32,7 @@ app.MapGet("/me", (HttpContext context) =>
 .WithName("GetCurrentUser")
 .WithTags("Identity");
 
-// Cached per user (the endpoint requires authorization) — key: "sample:api::GetProducts:u-…"
+// Cached per user (the endpoint requires authorization) — key: "sample:api::GetProducts%i…:%u…"
 // Re-hydrates from Redis on subsequent requests within the 300 s TTL.
 app.MapGet("/products", [Authorize] () =>
 {
@@ -49,7 +49,7 @@ app.MapGet("/products", [Authorize] () =>
 .WithName("GetProducts")
 .WithTags("Products");
 
-// Public data, identical for every caller: one shared entry — key: "sample:api::GetCatalog"
+// Public data, identical for every caller: one shared entry — key: "sample:api::GetCatalog%i…:%s"
 // Use Shared only when the response never depends on who is calling.
 app.MapGet("/catalog", () =>
 {
@@ -60,7 +60,7 @@ app.MapGet("/catalog", () =>
 .WithName("GetCatalog")
 .WithTags("Products");
 
-// Cached per user with a custom key — key: "sample:api::UserInfo:{userId}:GetUser:u-…"
+// Cached per user with a custom key — key: "sample:api::UserInfo:{userId}:GetUser%i…:%u…"
 app.MapGet("/users/{userId}", [Authorize] (int userId) =>
 {
     return Results.Ok(new { userId, name = $"User {userId}", email = $"user{userId}@example.com" });
@@ -69,7 +69,7 @@ app.MapGet("/users/{userId}", [Authorize] (int userId) =>
 .WithName("GetUser")
 .WithTags("Users");
 
-// Same custom key — key: "sample:api::UserInfo:{userId}:GetUserPermissions:u-…"
+// Same custom key — key: "sample:api::UserInfo:{userId}:GetUserPermissions%i…:%u…"
 // ICacheService.DeleteCascadeAsync("UserInfo:{userId}") removes this entry and the one above, for every user.
 app.MapGet("/users/{userId}/permissions", [Authorize] (int userId) =>
 {

@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`[Cache]` could serve one user's response to another user.** Keys did not include the caller, so the first response to an authenticated endpoint was replayed to everyone, and a cache hit skipped the authorization checks inside the handler. Entries are now kept per user (a hash of the `sub` claim) whenever the request is authenticated or the endpoint requires authorization. An authenticated caller without a `sub` or `NameIdentifier` claim is never cached.
 - **Minimal API `[Cache]` stored error results and replayed them as 200.** `Forbid`, `NotFound`, `Problem` and any other `IResult` were cached and served as a successful response. Only 200 responses with a value are stored now, and nested `Results<...>` unions are unwrapped first.
 - **Cache keys could collide.** Arguments were written with `ToString()`, so different DTOs, values containing `:` or `*`, and endpoints sharing a custom key (`/users/42` and `/users/42/permissions` both mapped to `UserInfo:42`) could share one entry. Arguments are now escaped, complex values are hashed, and every key carries its endpoint id.
+- **Two endpoints with the same readable id shared a key space, so an anonymous caller could read or poison another user's entry.** For example `Admin/UsersController.Get(int id)` (`[Authorize]`) and `Public/UsersController.Get(int id, string? lang)` both used `Users::Get`, and `lang=u-<hash>` reproduced the victim's per-user key. Every key now ends with a scope marker that an argument cannot produce (`%u…`, `%a` or `%s`, always present), and the endpoint id carries `%i` plus a hash of the controller type, method signature and area (MVC) or the route pattern, handler and hosts (Minimal APIs).
 - **`DeleteAllAsync` with the default empty `PrefixKey` deleted every key in the Redis database.** It now does nothing and logs a warning.
 - **Glob characters in the prefix or in a cascade segment matched unrelated keys.** `GetKeysAsync`, `DeleteAllAsync` and `DeleteCascadeAsync` now escape the prefix and the segment, so they match literally, and `DeleteCascadeAsync` refuses an empty segment.
 - **Non-GET requests were cached.** A `POST` or `DELETE` on a `[Cache]` endpoint could be answered from the cache without running. Only `GET` and `HEAD` are cached now.
@@ -29,7 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### ⚠ Behavior changes
 - `[Cache]` entries are per user by default (`CacheUserScope.Auto`): per-user when the request is authenticated or the endpoint requires authorization, shared for anonymous requests to public endpoints.
-- The cache key format changed to `{customKey}:{args}:{endpointId}:{userSegment}` (or `{endpointId}:{args}:{userSegment}` without a custom key). The cache starts cold after deploy, and code that read `[Cache]` entries by exact key must use the new layout or `DeleteCascadeAsync`.
+- The cache key format changed to `{customKey}:{args}:{endpointId}:{scope}` (or `{endpointId}:{args}:{scope}` without a custom key). The endpoint id is a readable name plus `%i` and 8 hex characters (e.g. `Users::Get%i…`), and the scope marker is always last: `%u…` per user, `%a` for anonymous `PerUser` requests, `%s` for shared entries. The cache starts cold after deploy, and code that read `[Cache]` entries by exact key must use the new layout or `DeleteCascadeAsync` (`DeleteCascadeAsync("UserInfo:42")` still removes every `UserInfo:42:…` entry). Build cascade segments with `Uri.EscapeDataString(id)`, because arguments are URI-escaped in the key (`a@b.com` is stored as `a%40b.com`).
+- With a custom or empty `RoutePrefix`, the Swagger JSON is now served under the prefix (`/{prefix}/{version}/swagger.json`) instead of `/swagger/{version}/swagger.json`; update client generators, gateways and other tooling that fetch the spec by URL.
 - Only `GET`/`HEAD` requests with a final 200 response and a value are cached. `string` values, `ProblemDetails` and non-200 results are never cached.
 - `DeleteAllAsync` is a no-op, with a warning, when `PrefixKey` is empty.
 - Redis connects lazily (`AbortOnConnectFail=false`) and no longer crashes startup when Redis is down; `[Cache]` endpoints are served uncached until it is reachable. The first cached request can wait up to `connectTimeout` (5 s by default). If the cache service cannot be created, `[Cache]` serves uncached and logs a warning.
@@ -40,7 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `CacheUserScope` enum (`Auto`, `PerUser`, `Shared`) and `CacheAttribute.UserScope`, e.g. `[Cache(600, UserScope = CacheUserScope.Shared)]` or `new CacheAttribute(600) { UserScope = CacheUserScope.Shared }`.
 - `CoreSetup:Jwt:ValidAlgorithms`: opt-in allow-list of signing algorithms (e.g. `["RS256"]`). Empty keeps the handler default.
-- Startup warnings: empty `Jwt:Authority`, `Jwt:Audience` set to `account`, `ValidateIssuer`/`ValidateAudience`/`ValidateLifetime` disabled, Swagger enabled outside Development (it will be off by default outside Development in 2.0.0), empty `Redis:PrefixKey`, and a non-TLS remote Redis.
+- Startup warnings: empty `Jwt:Authority`, `Jwt:Audience` set to `account`, `ValidateIssuer`/`ValidateAudience`/`ValidateLifetime` disabled, Swagger enabled outside Development (it will be off by default outside Development in 2.0.0), empty `Redis:PrefixKey`, a `Redis:PrefixKey` that does not end with `:` (cascade and `DeleteAllAsync` would also match sibling prefixes such as `myapp2`), and a non-TLS remote Redis.
+- Debug logs when `[Cache]` cannot serialize a response or build a key for an argument, with the type name only (never the value).
 - Runtime warnings instead of silently swallowed Redis errors: failed operations, short-circuit timeouts, disconnected primaries, skipped `DeleteAllAsync`/`DeleteCascadeAsync`, and an unavailable cache service. Caller cancellation is logged at Debug. Connection strings are never logged.
 - `GetKeysAsync`, `DeleteAllAsync` and `DeleteCascadeAsync` scan every connected primary (Redis Cluster), and deletes are batched per hash slot.
 - SourceLink and `.snupkg` symbol packages.
@@ -50,11 +53,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A custom Swagger `RoutePrefix` (e.g. `api-docs`) now serves the JSON at `/{prefix}/{version}/swagger.json`, so the UI loads it. `RoutePrefix: ""` serves the UI at the site root and the JSON at `/{version}/swagger.json`.
 - MVC `[Cache]` now caches `ActionResult<T>` and any `ObjectResult` with a 200 (or unset) status; before, only `OkObjectResult` was cached.
 - A value that fails to serialize (including a throwing custom converter) is returned normally instead of turning the response into a 500.
+- An MVC parameter with an explicit request binding (`[FromQuery]`, `[FromRoute]`, `[FromBody]`, `[FromForm]`, `[FromHeader]`, custom) is part of the key even when its type is also registered in DI.
+- A Swagger `RoutePrefix` with spaces or leading/trailing slashes (`/docs/`, ` docs `) is normalized, so the UI, the JSON route and the UI's spec URL agree.
 
 ### Changed
 - Package metadata: SourceLink repository info, symbol packages, NuGet audit, and package validation against 1.4.2 (the public API changes are additive only). Dependency floors are unchanged.
 - CI: least-privilege permissions, actions pinned by SHA, and Dependabot.
-- Release: publishes with NuGet Trusted Publishing (OIDC) instead of an API key, requires a `## [x.y.z]` section in this CHANGELOG (used as the release notes) and the tag on `main`.
+- Release: publishes with NuGet Trusted Publishing (OIDC) instead of an API key, requires a `## [x.y.z]` section in this CHANGELOG (used as the release notes), the tag on `main` and a SemVer tag. Build and publish run as separate jobs: publish runs in the `nuget-release` environment without a checkout.
 
 ## [1.4.2] - 2026-06-05
 
