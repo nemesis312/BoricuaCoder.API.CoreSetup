@@ -44,7 +44,8 @@ public static class ApplicationBuilderExtensions
                     "CoreSetup: Swagger UI is enabled in the '{Environment}' environment and exposes the full API surface. It will be disabled by default outside Development in 2.0.0. Set CoreSetup:Swagger:Enabled explicitly.",
                     app.Environment.EnvironmentName);
 
-            var routePrefix = options.Swagger.RoutePrefix;
+            // Normalize once so the UI, the JSON route and the UI's spec URL always agree.
+            var routePrefix = (options.Swagger.RoutePrefix ?? "").Trim().Trim('/');
             var version = options.Swagger.Version;
 
             app.UseSwagger(c =>
@@ -76,7 +77,7 @@ public static class ApplicationBuilderExtensions
 
     internal static string BuildSwaggerJsonPath(string routePrefix, string version)
     {
-        var prefix = routePrefix?.Trim('/');
+        var prefix = routePrefix?.Trim().Trim('/');
         return string.IsNullOrWhiteSpace(prefix)
             ? $"/{version}/swagger.json"
             : $"/{prefix}/{version}/swagger.json";
@@ -132,6 +133,11 @@ public static class ApplicationBuilderExtensions
         if (string.IsNullOrEmpty(redis.PrefixKey))
             logger.LogWarning(
                 "CoreSetup: Redis PrefixKey is empty. Cache keys share the database namespace with other apps and DeleteAllAsync is disabled. Set CoreSetup:Redis:PrefixKey.");
+
+        if (!string.IsNullOrEmpty(redis.PrefixKey) && !redis.PrefixKey.EndsWith(':'))
+            logger.LogWarning(
+                "CoreSetup: Redis PrefixKey '{PrefixKey}' does not end with ':'. DeleteAllAsync and cascade deletes may also match keys of other apps whose prefix starts with the same text.",
+                redis.PrefixKey);
 
         // Never log the connection string: it can carry a password.
         if (!string.IsNullOrWhiteSpace(redis.ConnectionString) && RedisSetup.IsInsecureRemote(redis.ConnectionString))

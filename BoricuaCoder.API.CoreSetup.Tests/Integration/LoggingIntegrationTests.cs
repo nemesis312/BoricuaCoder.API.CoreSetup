@@ -187,6 +187,28 @@ public class LoggingIntegrationTests : IAsyncLifetime
         Assert.DoesNotContain(warnings, m => m == InsecureRemoteWarning);
     }
 
+    private static string PrefixSeparatorWarning(string prefixKey) =>
+        $"CoreSetup: Redis PrefixKey '{prefixKey}' does not end with ':'. DeleteAllAsync and cascade deletes may also match keys of other apps whose prefix starts with the same text.";
+
+    [Fact]
+    public void UseCoreSetup_PrefixKeyWithoutSeparator_LogsWarning()
+    {
+        var warnings = RedisWarnings("localhost:6379", prefixKey: "myapp");
+
+        Assert.Single(warnings, m => m == PrefixSeparatorWarning("myapp"));
+    }
+
+    [Theory]
+    [InlineData("app::")]
+    [InlineData("myapp:")]
+    [InlineData("")]
+    public void UseCoreSetup_PrefixKeyEndingWithSeparatorOrEmpty_NoSeparatorWarning(string prefixKey)
+    {
+        var warnings = RedisWarnings("localhost:6379", prefixKey);
+
+        Assert.DoesNotContain(warnings, m => m.Contains("does not end with ':'"));
+    }
+
     private static List<string> RedisWarnings(string connectionString, string prefixKey)
     {
         var config = new Dictionary<string, string?>(IntegrationTestBase.DefaultConfig)
