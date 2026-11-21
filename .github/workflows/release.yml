@@ -1,11 +1,22 @@
 # Release: publishes BoricuaCoder.API.CoreSetup to nuget.org on a v*.*.* tag.
 #
+# Jobs: ci (reusable CI) -> build (read-only token, packs and uploads the
+# packages and release notes) -> publish (environment nuget-release, no
+# checkout: downloads the artifact, pushes to nuget.org, creates the release).
+#
 # Publishing uses NuGet Trusted Publishing (GitHub OIDC), so there is no
 # long-lived API key secret. Owner prerequisites before the first tag:
 #   1. On nuget.org, create a trusted-publishing policy for repository
-#      nemesis312/BoricuaCoder.API.CoreSetup and workflow file release.yml.
+#      nemesis312/BoricuaCoder.API.CoreSetup, workflow file release.yml and
+#      environment nuget-release.
 #   2. In the GitHub repo, create the Actions variable NUGET_USER set to the
 #      nuget.org profile name that owns the package.
+#   3. Create the GitHub environment nuget-release with a deployment tag rule
+#      v* and a required reviewer.
+#   4. Add a tag ruleset for v*: creation restricted to admins, no update and
+#      no deletion.
+#   5. The environment that holds CODECOV_TOKEN must allow tag refs, because
+#      the ci job runs on the release tag.
 name: Release
 
 on:
@@ -21,18 +32,20 @@ jobs:
     uses: ./.github/workflows/ci.yml
     secrets: inherit
 
-  release:
+  build:
     needs: ci
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      id-token: write
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.VERSION }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Require tagged commit on main
         run: |
@@ -42,7 +55,12 @@ jobs:
           fi
 
       - name: Extract version from tag
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::Invalid version '$VERSION'"; exit 1; }
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Extract release notes from CHANGELOG.md
         run: |
@@ -75,6 +93,32 @@ jobs:
             --configuration Release \
             /p:Version="$VERSION" \
             --output ./nupkg
+
+      - name: Upload packages and release notes
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: |
+            ./nupkg
+            release-notes.md
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: nuget-release
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+
+    steps:
+      - name: Download packages and release notes
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: release
+          path: .
 
       - name: NuGet login (OIDC)
         id: login
