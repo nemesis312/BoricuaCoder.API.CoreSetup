@@ -364,4 +364,20 @@ public class CoreSetupOptionsValidatorTests
         Assert.True(result.Failed);
         Assert.DoesNotContain(result.Failures!, f => f.Contains("Hunter2xyz"));
     }
+
+    [Theory]
+    [InlineData("redis://user:Hunter2xyz@host:6379")]
+    [InlineData("rediss://user:Hunter2xyz@host:6380")]
+    [InlineData("REDIS://user:Hunter2xyz@host:6379")]
+    [InlineData("  Rediss://user:Hunter2xyz@host:6380")]
+    public void Validate_RedisEnabled_UriFormat_FailsWithoutEchoingValue(string connectionString)
+    {
+        var result = ValidateRedis(connectionString);
+
+        Assert.True(result.Failed);
+        Assert.Contains(
+            "CoreSetup:Redis:ConnectionString uses URI format (redis://), which StackExchange.Redis does not support. Use \"host:port,password=...,ssl=true\".",
+            result.Failures!);
+        Assert.DoesNotContain(result.Failures!, f => f.Contains("Hunter2xyz") || f.Contains("user:"));
+    }
 }

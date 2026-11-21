@@ -71,6 +71,15 @@ internal sealed class CoreSetupOptionsValidator : IValidateOptions<CoreSetupOpti
     /// </summary>
     private static void ValidateRedisConnectionString(string connectionString, List<string> errors)
     {
+        var trimmed = connectionString.AsSpan().TrimStart();
+        if (trimmed.StartsWith("redis://", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.StartsWith("rediss://", StringComparison.OrdinalIgnoreCase))
+        {
+            errors.Add(
+                "CoreSetup:Redis:ConnectionString uses URI format (redis://), which StackExchange.Redis does not support. Use \"host:port,password=...,ssl=true\".");
+            return;
+        }
+
         ConfigurationOptions parsed;
         try
         {
