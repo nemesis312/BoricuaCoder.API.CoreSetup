@@ -8,6 +8,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Metadata;
 using Microsoft.AspNetCore.Mvc.Abstractions;
+using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Mvc.Infrastructure;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
@@ -18,11 +19,19 @@ using Microsoft.Extensions.Options;
 namespace BoricuaCoder.API.CoreSetup.Caching;
 
 /// <summary>
-/// Builds v2 cache keys. Layout (segments joined by <c>:</c>, empty parts omitted):
-/// <c>{endpointId}:{args...}:{userSegment}</c>, or with a custom key
-/// <c>{customKey}:{args...}:{endpointId}:{userSegment}</c>. The Redis prefix is added by
+/// Builds v2 cache keys. Layout (segments joined by <c>:</c>, an empty args part omitted):
+/// <c>{endpointId}:{args...}:{scope}</c>, or with a custom key
+/// <c>{customKey}:{args...}:{endpointId}:{scope}</c>. The Redis prefix is added by
 /// <see cref="RedisCacheService"/>.
 /// </summary>
+/// <remarks>
+/// The endpoint id is a readable name followed by <c>%i</c> and 8 hex characters that identify the
+/// endpoint itself (controller type, method and signature, area, route pattern, hosts), so two endpoints
+/// with the same readable name never share keys. The scope marker is always last and always present:
+/// <c>%u</c> + 32 hex (per user), <c>%a</c> (anonymous per-user bucket) or <c>%s</c> (shared). Every
+/// marker starts with <c>%</c>, which an escaped argument can only contain as <c>%25</c>, so an argument
+/// can never forge an endpoint id or a scope.
+/// </remarks>
 internal static class CacheKeyGenerator
 {
     private const int MaxKeyLength = 512;
@@ -30,13 +39,14 @@ internal static class CacheKeyGenerator
     private const string NullToken = "%";
     private const string EmptyToken = "%e";
     private const string HashMarker = "%h";
+    private const string EndpointIdMarker = "%i";
 
     /// <summary>Builds a cache key from an MVC action filter context. Returns null when an argument cannot be encoded.</summary>
     internal static string? Generate(string? customKey, ActionExecutingContext context, string? userSegment)
     {
         var controller = context.RouteData.Values["controller"]?.ToString() ?? "Unknown";
         var action = context.RouteData.Values["action"]?.ToString() ?? "Unknown";
-        var endpointId = $"{controller}::{action}";
+        var endpointId = $"{controller}::{action}{EndpointIdMarker}{MvcIdentity(context)}";
 
         var services = context.HttpContext.RequestServices;
         var isService = services?.GetService<IServiceProviderIsService>();
@@ -66,7 +76,7 @@ internal static class CacheKeyGenerator
     {
         var httpContext = context.HttpContext;
         var endpoint = httpContext.GetEndpoint();
-        var endpointId = Uri.EscapeDataString(ResolveEndpointId(httpContext));
+        var endpointId = Uri.EscapeDataString(ResolveEndpointId(httpContext)) + EndpointIdMarker + EndpointIdentity(endpoint);
 
         var services = httpContext.RequestServices;
         var isService = services?.GetService<IServiceProviderIsService>();
@@ -166,13 +176,68 @@ internal static class CacheKeyGenerator
         return "unknown";
     }
 
+    /// <summary>
+    /// 8 hex characters identifying an MVC action: area, controller type, method name and parameter
+    /// types. Without a <see cref="ControllerActionDescriptor"/> the descriptor's parameter types are used.
+    /// </summary>
+    private static string MvcIdentity(ActionExecutingContext context)
+    {
+        var area = context.RouteData.Values["area"]?.ToString() ?? string.Empty;
+        var controllerType = string.Empty;
+        var method = string.Empty;
+        IEnumerable<Type> parameterTypes;
+
+        if (context.ActionDescriptor is ControllerActionDescriptor { MethodInfo: { } methodInfo } descriptor)
+        {
+            controllerType = descriptor.ControllerTypeInfo?.FullName ?? string.Empty;
+            method = methodInfo.Name;
+            parameterTypes = methodInfo.GetParameters().Select(p => p.ParameterType);
+        }
+        else
+        {
+            parameterTypes = context.ActionDescriptor.Parameters.Select(p => p.ParameterType);
+        }
+
+        return ShortHash(area, controllerType, method, JoinTypeNames(parameterTypes));
+    }
+
+    /// <summary>
+    /// 8 hex characters identifying a minimal API endpoint: route pattern, handler method (when the
+    /// metadata carries one) and the hosts it is restricted to.
+    /// </summary>
+    private static string EndpointIdentity(Endpoint? endpoint)
+    {
+        var rawText = (endpoint as RouteEndpoint)?.RoutePattern.RawText ?? string.Empty;
+
+        var handler = string.Empty;
+        if (endpoint?.Metadata.GetMetadata<MethodInfo>() is { } method)
+            handler = string.Join("|",
+                method.DeclaringType?.FullName ?? string.Empty,
+                method.Name,
+                JoinTypeNames(method.GetParameters().Select(p => p.ParameterType)));
+
+        var hosts = endpoint?.Metadata.GetMetadata<IHostMetadata>()?.Hosts ?? [];
+        var hostList = string.Join(",", hosts.Order(StringComparer.Ordinal));
+
+        return ShortHash(rawText, handler, hostList);
+    }
+
+    private static string JoinTypeNames(IEnumerable<Type> types)
+        => string.Join(",", types.Select(t => t.FullName ?? t.Name));
+
+    private static string ShortHash(params string[] parts)
+        => Sha256Hex(Encoding.UTF8.GetBytes(string.Join("\n", parts)))[..8];
+
     private static string? Normalize(string? value)
         => value?.Trim('/').Replace("/", "_");
 
     private static string Compose(string? customKey, string endpointId, List<string> tokens, string? userSegment)
     {
+        // The scope marker is never omitted: a missing segment means a shared entry.
+        userSegment = string.IsNullOrEmpty(userSegment) ? CacheUserScopeResolver.SharedSegment : userSegment;
+
         // The args part is never omitted when there is at least one token: every token is non-empty
-        // (empty strings encode as %e), so a user segment can never be forged through an argument.
+        // (empty strings encode as %e), and the scope marker is always last.
         var args = tokens.Count > 0 ? string.Join(":", tokens) : null;
         var key = Join(customKey, endpointId, args, userSegment);
         if (key.Length <= MaxKeyLength)

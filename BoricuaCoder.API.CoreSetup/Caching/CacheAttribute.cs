@@ -37,10 +37,11 @@ namespace BoricuaCoder.API.CoreSetup.Caching;
 /// <para>
 /// When seconds is 0, the TTL falls back to <c>CoreSetup:Redis:DefaultTTL</c> (default 300 s).<br/>
 /// When a custom key is supplied (e.g. "UserInfo"), the cache key becomes
-/// <c>{PrefixKey}UserInfo:{args}:{endpointId}:{userSegment}</c>; otherwise it is
-/// <c>{PrefixKey}{endpointId}:{args}:{userSegment}</c>, where the endpoint id is the controller/action name
-/// (MVC) or the endpoint name or route (minimal APIs), each argument is escaped, or hashed when it is long
-/// or complex, and the user segment is present only for per-user entries.
+/// <c>{PrefixKey}UserInfo:{args}:{endpointId}:{scope}</c>; otherwise it is
+/// <c>{PrefixKey}{endpointId}:{args}:{scope}</c>. The endpoint id is the controller/action name (MVC) or
+/// the endpoint name or route (minimal APIs) followed by <c>%i</c> and 8 hex characters that identify the
+/// endpoint, each argument is escaped, or hashed when it is long or complex, and the scope marker is always
+/// last: <c>%u</c> + 32 hex for a user, <c>%a</c> for anonymous per-user entries, <c>%s</c> for shared ones.
 /// </para>
 /// </remarks>
 [AttributeUsage(AttributeTargets.Method | AttributeTargets.Class)]

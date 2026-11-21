@@ -424,7 +424,7 @@ public class CacheAttributeTests
 
         await attribute.OnActionExecutionAsync(context, BuildNext(new OkObjectResult("data")));
 
-        Assert.EndsWith(":u-anon", CapturedGetKey(cacheService));
+        Assert.EndsWith(":%a", CapturedGetKey(cacheService));
     }
 
     [Fact]

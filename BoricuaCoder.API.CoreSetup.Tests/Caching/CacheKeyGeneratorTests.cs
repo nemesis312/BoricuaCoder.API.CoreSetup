@@ -88,7 +88,7 @@ public class CacheKeyGeneratorTests
     {
         var context = BuildMvcContext("Products", "GetAll", []);
 
-        Assert.Equal("Products::GetAll", CacheKeyGenerator.Generate(null, context, null));
+        Assert.Matches("^Products::GetAll%i[0-9a-f]{8}:%s$", CacheKeyGenerator.Generate(null, context, null));
     }
 
     [Fact]
@@ -101,8 +101,8 @@ public class CacheKeyGeneratorTests
         var k2 = CacheKeyGenerator.Generate(null, second, null);
 
         Assert.NotEqual(k1, k2);
-        Assert.Equal("Orders::Search:%:5", k1);
-        Assert.Equal("Orders::Search:5:%", k2);
+        Assert.Matches("^Orders::Search%i[0-9a-f]{8}:%:5:%s$", k1);
+        Assert.Matches("^Orders::Search%i[0-9a-f]{8}:5:%:%s$", k2);
     }
 
     [Fact]
@@ -111,7 +111,7 @@ public class CacheKeyGeneratorTests
         var context = BuildMvcContext("Orders", "Search", [("a", 1), ("b", 2)]);
         context.ActionArguments.Remove("a");
 
-        Assert.Equal("Orders::Search:%:2", CacheKeyGenerator.Generate(null, context, null));
+        Assert.Matches("^Orders::Search%i[0-9a-f]{8}:%:2:%s$", CacheKeyGenerator.Generate(null, context, null));
     }
 
     [Fact]
@@ -119,7 +119,7 @@ public class CacheKeyGeneratorTests
     {
         var context = BuildMvcContext("Users", "GetPermissions", [("id", 42)]);
 
-        Assert.Equal("UserInfo:42:Users::GetPermissions", CacheKeyGenerator.Generate("UserInfo", context, null));
+        Assert.Matches("^UserInfo:42:Users::GetPermissions%i[0-9a-f]{8}:%s$", CacheKeyGenerator.Generate("UserInfo", context, null));
     }
 
     [Fact]
@@ -141,11 +141,11 @@ public class CacheKeyGeneratorTests
     {
         var context = BuildMvcContext("Users", "Me", [("id", 1)]);
 
-        var key = CacheKeyGenerator.Generate("UserInfo", context, "u-abc");
+        var key = CacheKeyGenerator.Generate("UserInfo", context, "%uabc");
 
         Assert.NotNull(key);
-        Assert.EndsWith(":u-abc", key);
-        Assert.Equal("UserInfo:1:Users::Me:u-abc", key);
+        Assert.EndsWith(":%uabc", key);
+        Assert.Matches("^UserInfo:1:Users::Me%i[0-9a-f]{8}:%uabc$", key);
     }
 
     [Fact]
@@ -153,7 +153,7 @@ public class CacheKeyGeneratorTests
     {
         var context = BuildMvcContext("Orders", "List", [("ct", CancellationToken.None)]);
 
-        Assert.Equal("Orders::List", CacheKeyGenerator.Generate(null, context, null));
+        Assert.Matches("^Orders::List%i[0-9a-f]{8}:%s$", CacheKeyGenerator.Generate(null, context, null));
     }
 
     [Fact]
@@ -163,7 +163,7 @@ public class CacheKeyGeneratorTests
         var actionContext = new ActionContext(httpContext, new RouteData(), new ActionDescriptor());
         var execContext = new ActionExecutingContext(actionContext, new List<IFilterMetadata>(), new Dictionary<string, object?>(), new object());
 
-        Assert.Equal("Unknown::Unknown", CacheKeyGenerator.Generate(null, execContext, null));
+        Assert.Matches("^Unknown::Unknown%i[0-9a-f]{8}:%s$", CacheKeyGenerator.Generate(null, execContext, null));
     }
 
     [Fact]
@@ -183,7 +183,7 @@ public class CacheKeyGeneratorTests
     {
         var context = BuildEndpointContext(endpointName: "GetProducts", args: [7]);
 
-        Assert.Equal("GetProducts:7", CacheKeyGenerator.Generate(null, context, null));
+        Assert.Matches("^GetProducts%i[0-9a-f]{8}:7:%s$", CacheKeyGenerator.Generate(null, context, null));
     }
 
     [Fact]
@@ -191,7 +191,7 @@ public class CacheKeyGeneratorTests
     {
         var context = BuildEndpointContext(endpointName: "GetUser", args: [42]);
 
-        Assert.Equal("UserInfo:42:GetUser:u-abc", CacheKeyGenerator.Generate("UserInfo", context, "u-abc"));
+        Assert.Matches("^UserInfo:42:GetUser%i[0-9a-f]{8}:%uabc$", CacheKeyGenerator.Generate("UserInfo", context, "%uabc"));
     }
 
     [Fact]
@@ -208,7 +208,7 @@ public class CacheKeyGeneratorTests
             args: [provider.GetRequiredService<FakeService>(), new ClaimsPrincipal(), httpContext, 99, CancellationToken.None],
             httpContext: httpContext);
 
-        Assert.Equal("GetUser:99", CacheKeyGenerator.Generate(null, context, null));
+        Assert.Matches("^GetUser%i[0-9a-f]{8}:99:%s$", CacheKeyGenerator.Generate(null, context, null));
     }
 
     [Fact]
@@ -216,7 +216,7 @@ public class CacheKeyGeneratorTests
     {
         var context = BuildEndpointContext(routePattern: "/users/{id}", args: [42]);
 
-        Assert.Equal("users_%7Bid%7D:42", CacheKeyGenerator.Generate(null, context, null));
+        Assert.Matches("^users_%7Bid%7D%i[0-9a-f]{8}:42:%s$", CacheKeyGenerator.Generate(null, context, null));
     }
 
     [Fact]
@@ -224,7 +224,7 @@ public class CacheKeyGeneratorTests
     {
         var context = BuildEndpointContext(path: "/products/list", args: []);
 
-        Assert.Equal("products_list", CacheKeyGenerator.Generate(null, context, null));
+        Assert.Matches("^products_list%i[0-9a-f]{8}:%s$", CacheKeyGenerator.Generate(null, context, null));
     }
 
     [Fact]
@@ -232,7 +232,7 @@ public class CacheKeyGeneratorTests
     {
         var context = BuildEndpointContext(args: []);
 
-        Assert.Equal("unknown", CacheKeyGenerator.Generate(null, context, null));
+        Assert.Matches("^unknown%i[0-9a-f]{8}:%s$", CacheKeyGenerator.Generate(null, context, null));
     }
 
     [Fact]
@@ -241,11 +241,11 @@ public class CacheKeyGeneratorTests
         var args = Enumerable.Range(0, 20).Select(i => (object?)$"{i:D2}{new string('v', 58)}").ToArray();
         var context = BuildEndpointContext(endpointName: "Search", args: args);
 
-        var key = CacheKeyGenerator.Generate(null, context, "u-abc");
+        var key = CacheKeyGenerator.Generate(null, context, "%uabc");
 
         Assert.NotNull(key);
         Assert.True(key.Length <= 512);
-        Assert.Matches(new Regex("^Search:%h[0-9a-f]{64}:u-abc$"), key);
+        Assert.Matches(new Regex("^Search%i[0-9a-f]{8}:%h[0-9a-f]{64}:%uabc$"), key);
     }
 
     // ── Fix round 1: service detection, empty strings, length ────────────────
@@ -256,10 +256,11 @@ public class CacheKeyGeneratorTests
     [Fact]
     public void Generate_EmptyArgWithUserSegment_DiffersFromForgedUserArg()
     {
-        var victim = CacheKeyGenerator.Generate(null, BuildEndpointContext(endpointName: "search", args: [""]), "u-X");
-        var forged = CacheKeyGenerator.Generate(null, BuildEndpointContext(endpointName: "search", args: ["u-X"]), null);
+        var victim = CacheKeyGenerator.Generate(null, BuildEndpointContext(endpointName: "search", args: [""]), "%uX");
+        var forged = CacheKeyGenerator.Generate(null, BuildEndpointContext(endpointName: "search", args: ["%uX"]), null);
 
-        Assert.Equal("search:%e:u-X", victim);
+        Assert.Matches("^search%i[0-9a-f]{8}:%e:%uX$", victim);
+        Assert.Matches("^search%i[0-9a-f]{8}:%25uX:%s$", forged);
         Assert.NotEqual(victim, forged);
     }
 
@@ -276,7 +277,7 @@ public class CacheKeyGeneratorTests
         var k2 = CacheKeyGenerator.Generate(null, two, null);
 
         Assert.NotEqual(k1, k2);
-        Assert.Matches("^Orders::ByIds:%h[0-9a-f]{32}$", k1!);
+        Assert.Matches("^Orders::ByIds%i[0-9a-f]{8}:%h[0-9a-f]{32}:%s$", k1!);
     }
 
     [Fact]
@@ -291,7 +292,7 @@ public class CacheKeyGeneratorTests
             new() { ["svc"] = new Node(), ["id"] = 5 },
             BuildProviderWithFakeService());
 
-        Assert.Equal("Users::Get:5", CacheKeyGenerator.Generate(null, context, null));
+        Assert.Matches("^Users::Get%i[0-9a-f]{8}:5:%s$", CacheKeyGenerator.Generate(null, context, null));
     }
 
     [Fact]
@@ -302,7 +303,7 @@ public class CacheKeyGeneratorTests
             new() { ["svc"] = new FakeService(), ["id"] = 5 },
             BuildProviderWithFakeService());
 
-        Assert.Equal("Users::Get:5", CacheKeyGenerator.Generate(null, context, null));
+        Assert.Matches("^Users::Get%i[0-9a-f]{8}:5:%s$", CacheKeyGenerator.Generate(null, context, null));
     }
 
     [Fact]
@@ -317,7 +318,7 @@ public class CacheKeyGeneratorTests
             httpContext: httpContext,
             metadata: [HandlerMethod(nameof(HandlerWithService))]);
 
-        Assert.Equal("GetUser:5", CacheKeyGenerator.Generate(null, context, null));
+        Assert.Matches("^GetUser%i[0-9a-f]{8}:5:%s$", CacheKeyGenerator.Generate(null, context, null));
     }
 
     [Fact]
@@ -333,7 +334,7 @@ public class CacheKeyGeneratorTests
         var k1 = CacheKeyGenerator.Generate(null, Build(1, 2), null);
         var k2 = CacheKeyGenerator.Generate(null, Build(1, 3), null);
 
-        Assert.Matches("^ByIds:%h[0-9a-f]{32}:%h[0-9a-f]{32}$", k1!);
+        Assert.Matches("^ByIds%i[0-9a-f]{8}:%h[0-9a-f]{32}:%h[0-9a-f]{32}:%s$", k1!);
         Assert.NotEqual(k1, k2);
     }
 
@@ -343,7 +344,7 @@ public class CacheKeyGeneratorTests
         var httpContext = new DefaultHttpContext { RequestServices = BuildProviderWithFakeService() };
         var context = BuildEndpointContext(endpointName: "ByIds", args: [new List<int> { 1 }], httpContext: httpContext);
 
-        Assert.Matches("^ByIds:%h[0-9a-f]{32}$", CacheKeyGenerator.Generate(null, context, null)!);
+        Assert.Matches("^ByIds%i[0-9a-f]{8}:%h[0-9a-f]{32}:%s$", CacheKeyGenerator.Generate(null, context, null)!);
     }
 
     [Fact]
@@ -351,11 +352,11 @@ public class CacheKeyGeneratorTests
     {
         var context = BuildEndpointContext(endpointName: new string('e', 600), args: [42]);
 
-        var key = CacheKeyGenerator.Generate("UserInfo", context, "u-abc");
+        var key = CacheKeyGenerator.Generate("UserInfo", context, "%uabc");
 
         Assert.NotNull(key);
         Assert.True(key.Length <= 512);
-        Assert.Matches("^UserInfo:%h[0-9a-f]{64}:%h[0-9a-f]{64}:u-abc$", key);
+        Assert.Matches("^UserInfo:%h[0-9a-f]{64}:%h[0-9a-f]{64}:%uabc$", key);
     }
 
     [Fact]
@@ -363,11 +364,11 @@ public class CacheKeyGeneratorTests
     {
         var context = BuildEndpointContext(endpointName: "GetUser", args: [42]);
 
-        var key = CacheKeyGenerator.Generate(new string('c', 600), context, "u-abc");
+        var key = CacheKeyGenerator.Generate(new string('c', 600), context, "%uabc");
 
         Assert.NotNull(key);
         Assert.True(key.Length <= 512);
-        Assert.Matches("^%h[0-9a-f]{64}:%h[0-9a-f]{64}:GetUser:u-abc$", key);
+        Assert.Matches("^%h[0-9a-f]{64}:%h[0-9a-f]{64}:GetUser%i[0-9a-f]{8}:%uabc$", key);
     }
 
     private static void HandlerWithService(IFakeService svc, int id) { }

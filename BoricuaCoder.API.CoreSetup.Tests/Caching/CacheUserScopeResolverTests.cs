@@ -8,25 +8,25 @@ namespace BoricuaCoder.API.CoreSetup.Tests.Caching;
 public class CacheUserScopeResolverTests
 {
     [Fact]
-    public void Resolve_Shared_ReturnsNullSegment()
+    public void Resolve_Shared_ReturnsSharedMarker()
     {
         var ctx = BuildContext(authenticated: true, claims: [new Claim("sub", "alice")]);
 
         var result = CacheUserScopeResolver.Resolve(ctx, CacheUserScope.Shared);
 
         Assert.True(result.CanCache);
-        Assert.Null(result.UserSegment);
+        Assert.Equal("%s", result.UserSegment);
     }
 
     [Fact]
-    public void Resolve_Auto_Anonymous_NoAuthorizeMetadata_ReturnsNullSegment()
+    public void Resolve_Auto_Anonymous_NoAuthorizeMetadata_ReturnsSharedMarker()
     {
         var ctx = BuildContext(authenticated: false);
 
         var result = CacheUserScopeResolver.Resolve(ctx, CacheUserScope.Auto);
 
         Assert.True(result.CanCache);
-        Assert.Null(result.UserSegment);
+        Assert.Equal("%s", result.UserSegment);
     }
 
     [Fact]
@@ -41,7 +41,7 @@ public class CacheUserScopeResolverTests
 
         Assert.True(alice1.CanCache);
         Assert.NotNull(alice1.UserSegment);
-        Assert.Matches("^u-[0-9a-f]{32}$", alice1.UserSegment);
+        Assert.Matches("^%u[0-9a-f]{32}$", alice1.UserSegment);
         Assert.Equal(alice1.UserSegment, alice2.UserSegment);
         Assert.NotEqual(alice1.UserSegment, bob.UserSegment);
     }
@@ -54,7 +54,7 @@ public class CacheUserScopeResolverTests
         var result = CacheUserScopeResolver.Resolve(ctx, CacheUserScope.Auto);
 
         Assert.True(result.CanCache);
-        Assert.Equal("u-anon", result.UserSegment);
+        Assert.Equal("%a", result.UserSegment);
     }
 
     [Fact]
@@ -65,7 +65,7 @@ public class CacheUserScopeResolverTests
         var result = CacheUserScopeResolver.Resolve(ctx, CacheUserScope.PerUser);
 
         Assert.True(result.CanCache);
-        Assert.Equal("u-anon", result.UserSegment);
+        Assert.Equal("%a", result.UserSegment);
     }
 
     [Fact]
@@ -96,7 +96,7 @@ public class CacheUserScopeResolverTests
 
         Assert.Equal(subOnly.UserSegment, both.UserSegment);
         Assert.NotEqual(nameIdOnly.UserSegment, both.UserSegment);
-        Assert.Matches("^u-[0-9a-f]{32}$", nameIdOnly.UserSegment!);
+        Assert.Matches("^%u[0-9a-f]{32}$", nameIdOnly.UserSegment!);
     }
 
     private static HttpContext BuildContext(
