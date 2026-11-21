@@ -1,106 +1,82 @@
+using System.Security.Claims;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using BoricuaCoder.API.CoreSetup.Caching;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Abstractions;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Routing.Patterns;
+using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
 
 namespace BoricuaCoder.API.CoreSetup.Tests.Caching;
 
 public class CacheKeyGeneratorTests
 {
-    // ── BuildKey ─────────────────────────────────────────────────────────────
+    private static readonly JsonSerializerOptions Json = JsonSerializerOptions.Default;
+
+    private sealed record Filter(string Q);
+
+    public interface IFakeService;
+
+    private sealed class FakeService : IFakeService;
+
+    // ── EncodeArg ────────────────────────────────────────────────────────────
 
     [Fact]
-    public void BuildKey_NoArgs_ReturnsPrefix_Segment()
-    {
-        var key = CacheKeyGenerator.BuildKey("myapp::", "Products::GetAll", "");
+    public void EncodeArg_Null_IsPercentToken() => Assert.Equal("%", CacheKeyGenerator.EncodeArg(null, Json));
 
-        Assert.Equal("myapp::Products::GetAll", key);
+    [Fact]
+    public void EncodeArg_EscapesSeparatorAndGlob()
+        => Assert.Equal("42%3Apermissions%2A", CacheKeyGenerator.EncodeArg("42:permissions*", Json));
+
+    [Fact]
+    public void EncodeArg_DistinctDtos_ProduceDistinctHashes()
+        => Assert.NotEqual(CacheKeyGenerator.EncodeArg(new Filter("a"), Json), CacheKeyGenerator.EncodeArg(new Filter("b"), Json));
+
+    [Fact]
+    public void EncodeArg_Dto_StartsWithHashMarker()
+        => Assert.StartsWith("%h", CacheKeyGenerator.EncodeArg(new Filter("a"), Json));
+
+    [Fact]
+    public void EncodeArg_LongString_IsHashed()
+    {
+        var encoded = CacheKeyGenerator.EncodeArg(new string('x', 65), Json);
+
+        Assert.NotNull(encoded);
+        Assert.Matches("^%h[0-9a-f]{32}$", encoded);
     }
 
     [Fact]
-    public void BuildKey_WithArgs_AppendsSeparatorAndArgs()
+    public void EncodeArg_Primitives_UseInvariantCulture()
     {
-        var key = CacheKeyGenerator.BuildKey("myapp::", "Products::GetById", "42");
-
-        Assert.Equal("myapp::Products::GetById:42", key);
+        Assert.Equal("42", CacheKeyGenerator.EncodeArg(42, Json));
+        Assert.Equal("1.5", CacheKeyGenerator.EncodeArg(1.5m, Json));
     }
 
     [Fact]
-    public void BuildKey_MultipleArgs_JoinsWithColon()
+    public void EncodeArg_DateTime_UsesRoundTripFormat()
     {
-        var key = CacheKeyGenerator.BuildKey("myapp::", "Orders::Get", "1:desc");
+        var dt = new DateTime(2026, 11, 21, 10, 30, 0, DateTimeKind.Utc);
 
-        Assert.Equal("myapp::Orders::Get:1:desc", key);
+        Assert.Equal(Uri.EscapeDataString(dt.ToString("O")), CacheKeyGenerator.EncodeArg(dt, Json));
     }
 
     [Fact]
-    public void BuildKey_EmptyPrefix_WorksCorrectly()
+    public void EncodeArg_UnserializableValue_ReturnsNull()
     {
-        var key = CacheKeyGenerator.BuildKey("", "Products::GetAll", "");
+        // A self-referencing graph throws a JsonException with default options.
+        var node = new Node();
+        node.Next = node;
 
-        Assert.Equal("Products::GetAll", key);
+        Assert.Null(CacheKeyGenerator.EncodeArg(node, Json));
     }
 
-    [Fact]
-    public void BuildKey_KeyExceedsMaxLength_ReturnsHashedKey()
+    private sealed class Node
     {
-        var longSegment = new string('a', 400);
-        var longArgs = new string('b', 200);
-
-        var key = CacheKeyGenerator.BuildKey("myapp::", longSegment, longArgs);
-
-        Assert.True(key.Length <= 512);
-        Assert.StartsWith("myapp::", key);
-    }
-
-    [Fact]
-    public void BuildKey_KeyAtExactMaxLength_IsNotHashed()
-    {
-        // Build a key that is exactly 512 chars
-        var segmentLength = 512 - "myapp::".Length;
-        var segment = new string('x', segmentLength);
-
-        var key = CacheKeyGenerator.BuildKey("myapp::", segment, "");
-
-        Assert.Equal(512, key.Length);
-        Assert.Equal($"myapp::{segment}", key);
-    }
-
-    // ── BuildArgsSegment ─────────────────────────────────────────────────────
-
-    [Fact]
-    public void BuildArgsSegment_EmptyCollection_ReturnsEmptyString()
-    {
-        var result = CacheKeyGenerator.BuildArgsSegment([]);
-
-        Assert.Equal("", result);
-    }
-
-    [Fact]
-    public void BuildArgsSegment_SinglePart_ReturnsItDirectly()
-    {
-        var result = CacheKeyGenerator.BuildArgsSegment(["42"]);
-
-        Assert.Equal("42", result);
-    }
-
-    [Fact]
-    public void BuildArgsSegment_MultipleParts_JoinsWithColon()
-    {
-        var result = CacheKeyGenerator.BuildArgsSegment(["1", "active", "en"]);
-
-        Assert.Equal("1:active:en", result);
-    }
-
-    [Fact]
-    public void BuildArgsSegment_SkipsEmptyParts()
-    {
-        var result = CacheKeyGenerator.BuildArgsSegment(["1", "", "en"]);
-
-        Assert.Equal("1:en", result);
+        public Node? Next { get; set; }
     }
 
     // ── Generate (MVC ActionExecutingContext) ─────────────────────────────────
@@ -108,111 +84,166 @@ public class CacheKeyGeneratorTests
     [Fact]
     public void Generate_Mvc_NoCustomKey_UsesControllerAndAction()
     {
-        var context = BuildMvcContext("Products", "GetAll", new Dictionary<string, object?>());
+        var context = BuildMvcContext("Products", "GetAll", []);
 
-        var key = CacheKeyGenerator.Generate(null, context, "myapp::");
-
-        Assert.Equal("myapp::Products::GetAll", key);
+        Assert.Equal("Products::GetAll", CacheKeyGenerator.Generate(null, context, null));
     }
 
     [Fact]
-    public void Generate_Mvc_WithIntArg_AppendsValue()
+    public void Generate_Mvc_NullPositionMatters()
     {
-        var context = BuildMvcContext("Products", "GetById",
-            new Dictionary<string, object?> { ["id"] = 42 });
+        var first = BuildMvcContext("Orders", "Search", [("a", null), ("b", 5)]);
+        var second = BuildMvcContext("Orders", "Search", [("a", 5), ("b", null)]);
 
-        var key = CacheKeyGenerator.Generate(null, context, "myapp::");
+        var k1 = CacheKeyGenerator.Generate(null, first, null);
+        var k2 = CacheKeyGenerator.Generate(null, second, null);
 
-        Assert.Equal("myapp::Products::GetById:42", key);
+        Assert.NotEqual(k1, k2);
+        Assert.Equal("Orders::Search:%:5", k1);
+        Assert.Equal("Orders::Search:5:%", k2);
     }
 
     [Fact]
-    public void Generate_Mvc_WithCustomKey_OverridesSegment()
+    public void Generate_Mvc_MissingArgument_CountsAsNull()
     {
-        var context = BuildMvcContext("Users", "Get",
-            new Dictionary<string, object?> { ["userId"] = 99 });
+        var context = BuildMvcContext("Orders", "Search", [("a", 1), ("b", 2)]);
+        context.ActionArguments.Remove("a");
 
-        var key = CacheKeyGenerator.Generate("UserInfo", context, "myapp::");
-
-        Assert.Equal("myapp::UserInfo:99", key);
+        Assert.Equal("Orders::Search:%:2", CacheKeyGenerator.Generate(null, context, null));
     }
 
     [Fact]
-    public void Generate_Mvc_SkipsCancellationTokenArgs()
+    public void Generate_Mvc_CustomKey_AppendsEndpointIdAfterArgs()
     {
-        var context = BuildMvcContext("Orders", "List",
-            new Dictionary<string, object?> { ["ct"] = CancellationToken.None });
+        var context = BuildMvcContext("Users", "GetPermissions", [("id", 42)]);
 
-        var key = CacheKeyGenerator.Generate(null, context, "myapp::");
+        Assert.Equal("UserInfo:42:Users::GetPermissions", CacheKeyGenerator.Generate("UserInfo", context, null));
+    }
 
-        Assert.Equal("myapp::Orders::List", key);
+    [Fact]
+    public void Generate_Mvc_SameCustomKeyDifferentActions_DoNotCollide()
+    {
+        var get = BuildMvcContext("Users", "Get", [("id", 42)]);
+        var perms = BuildMvcContext("Users", "GetPermissions", [("id", 42)]);
+
+        var k1 = CacheKeyGenerator.Generate("UserInfo", get, null);
+        var k2 = CacheKeyGenerator.Generate("UserInfo", perms, null);
+
+        Assert.NotEqual(k1, k2);
+        Assert.StartsWith("UserInfo:42:", k1);
+        Assert.StartsWith("UserInfo:42:", k2);
+    }
+
+    [Fact]
+    public void Generate_Mvc_UserSegment_IsLast()
+    {
+        var context = BuildMvcContext("Users", "Me", [("id", 1)]);
+
+        var key = CacheKeyGenerator.Generate("UserInfo", context, "u-abc");
+
+        Assert.NotNull(key);
+        Assert.EndsWith(":u-abc", key);
+        Assert.Equal("UserInfo:1:Users::Me:u-abc", key);
+    }
+
+    [Fact]
+    public void Generate_Mvc_SkipsCancellationToken()
+    {
+        var context = BuildMvcContext("Orders", "List", [("ct", CancellationToken.None)]);
+
+        Assert.Equal("Orders::List", CacheKeyGenerator.Generate(null, context, null));
     }
 
     [Fact]
     public void Generate_Mvc_NullRouteController_FallsBackToUnknown()
     {
         var httpContext = new DefaultHttpContext();
-        // no controller/action in route values
-        var routeData = new RouteData();
-        var actionContext = new ActionContext(httpContext, routeData, new ActionDescriptor());
+        var actionContext = new ActionContext(httpContext, new RouteData(), new ActionDescriptor());
         var execContext = new ActionExecutingContext(actionContext, new List<IFilterMetadata>(), new Dictionary<string, object?>(), new object());
 
-        var key = CacheKeyGenerator.Generate(null, execContext, "myapp::");
+        Assert.Equal("Unknown::Unknown", CacheKeyGenerator.Generate(null, execContext, null));
+    }
 
-        Assert.Equal("myapp::Unknown::Unknown", key);
+    [Fact]
+    public void Generate_Mvc_UnencodableArgument_ReturnsNull()
+    {
+        var node = new Node();
+        node.Next = node;
+        var context = BuildMvcContext("Orders", "Search", [("filter", node)]);
+
+        Assert.Null(CacheKeyGenerator.Generate(null, context, null));
     }
 
     // ── Generate (EndpointFilterInvocationContext) ────────────────────────────
 
     [Fact]
-    public void Generate_Endpoint_WithCustomKey_UsesCustomSegment()
-    {
-        var context = BuildEndpointContext(args: [42]);
-
-        var key = CacheKeyGenerator.Generate("UserInfo", context, "myapp::");
-
-        Assert.Equal("myapp::UserInfo:42", key);
-    }
-
-    [Fact]
     public void Generate_Endpoint_NoCustomKey_UsesEndpointName()
     {
-        var context = BuildEndpointContext(endpointName: "GetProducts", args: []);
+        var context = BuildEndpointContext(endpointName: "GetProducts", args: [7]);
 
-        var key = CacheKeyGenerator.Generate(null, context, "myapp::");
-
-        Assert.Equal("myapp::GetProducts", key);
+        Assert.Equal("GetProducts:7", CacheKeyGenerator.Generate(null, context, null));
     }
 
     [Fact]
-    public void Generate_Endpoint_NoEndpointName_FallsBackToRequestPath()
+    public void Generate_Endpoint_CustomKey_AppendsEndpointIdAfterArgs()
+    {
+        var context = BuildEndpointContext(endpointName: "GetUser", args: [42]);
+
+        Assert.Equal("UserInfo:42:GetUser:u-abc", CacheKeyGenerator.Generate("UserInfo", context, "u-abc"));
+    }
+
+    [Fact]
+    public void Generate_Endpoint_SkipsDiServicesAndClaimsPrincipal()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<IFakeService, FakeService>();
+        services.AddSingleton<FakeService>();
+        var provider = services.BuildServiceProvider();
+
+        var httpContext = new DefaultHttpContext { RequestServices = provider };
+        var context = BuildEndpointContext(
+            endpointName: "GetUser",
+            args: [provider.GetRequiredService<FakeService>(), new ClaimsPrincipal(), httpContext, 99, CancellationToken.None],
+            httpContext: httpContext);
+
+        Assert.Equal("GetUser:99", CacheKeyGenerator.Generate(null, context, null));
+    }
+
+    [Fact]
+    public void Generate_Endpoint_UsesRoutePatternWhenNoName()
+    {
+        var context = BuildEndpointContext(routePattern: "/users/{id}", args: [42]);
+
+        Assert.Equal("users_%7Bid%7D:42", CacheKeyGenerator.Generate(null, context, null));
+    }
+
+    [Fact]
+    public void Generate_Endpoint_NoEndpoint_FallsBackToRequestPath()
     {
         var context = BuildEndpointContext(path: "/products/list", args: []);
 
-        var key = CacheKeyGenerator.Generate(null, context, "myapp::");
-
-        Assert.Equal("myapp::products_list", key);
+        Assert.Equal("products_list", CacheKeyGenerator.Generate(null, context, null));
     }
 
     [Fact]
-    public void Generate_Endpoint_SkipsHttpContextArgs()
+    public void Generate_Endpoint_NothingAvailable_FallsBackToUnknown()
     {
-        var httpContext = new DefaultHttpContext();
-        var context = BuildEndpointContext(endpointName: "GetUser", args: [httpContext, 99]);
+        var context = BuildEndpointContext(args: []);
 
-        var key = CacheKeyGenerator.Generate(null, context, "myapp::");
-
-        Assert.Equal("myapp::GetUser:99", key);
+        Assert.Equal("unknown", CacheKeyGenerator.Generate(null, context, null));
     }
 
     [Fact]
-    public void Generate_Endpoint_SkipsCancellationTokenArgs()
+    public void Generate_LongArgs_HashedWithFullSha256()
     {
-        var context = BuildEndpointContext(endpointName: "List", args: [CancellationToken.None]);
+        var args = Enumerable.Range(0, 20).Select(i => (object?)$"{i:D2}{new string('v', 58)}").ToArray();
+        var context = BuildEndpointContext(endpointName: "Search", args: args);
 
-        var key = CacheKeyGenerator.Generate(null, context, "myapp::");
+        var key = CacheKeyGenerator.Generate(null, context, "u-abc");
 
-        Assert.Equal("myapp::List", key);
+        Assert.NotNull(key);
+        Assert.True(key.Length <= 512);
+        Assert.Matches(new Regex("^Search:%h[0-9a-f]{64}:u-abc$"), key);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -220,17 +251,27 @@ public class CacheKeyGeneratorTests
     private static EndpointFilterInvocationContext BuildEndpointContext(
         IEnumerable<object?>? args = null,
         string? endpointName = null,
-        string? path = null)
+        string? routePattern = null,
+        string? path = null,
+        HttpContext? httpContext = null)
     {
-        var httpContext = new DefaultHttpContext();
+        httpContext ??= new DefaultHttpContext();
 
         if (endpointName is not null)
         {
-            var endpoint = new Endpoint(
+            httpContext.SetEndpoint(new Endpoint(
                 _ => Task.CompletedTask,
                 new EndpointMetadataCollection(new EndpointNameMetadata(endpointName)),
-                endpointName);
-            httpContext.SetEndpoint(endpoint);
+                endpointName));
+        }
+        else if (routePattern is not null)
+        {
+            httpContext.SetEndpoint(new RouteEndpoint(
+                _ => Task.CompletedTask,
+                RoutePatternFactory.Parse(routePattern),
+                0,
+                EndpointMetadataCollection.Empty,
+                routePattern));
         }
 
         if (path is not null)
@@ -245,13 +286,26 @@ public class CacheKeyGeneratorTests
     private static ActionExecutingContext BuildMvcContext(
         string controller,
         string action,
-        Dictionary<string, object?> args)
+        (string Name, object? Value)[] args)
     {
         var httpContext = new DefaultHttpContext();
         httpContext.Request.RouteValues["controller"] = controller;
         httpContext.Request.RouteValues["action"] = action;
         var routeData = new RouteData(httpContext.Request.RouteValues);
-        var actionContext = new ActionContext(httpContext, routeData, new ActionDescriptor());
-        return new ActionExecutingContext(actionContext, new List<IFilterMetadata>(), args, new object());
+
+        var descriptor = new ActionDescriptor
+        {
+            Parameters = args
+                .Select(a => new ParameterDescriptor
+                {
+                    Name = a.Name,
+                    ParameterType = a.Value?.GetType() ?? typeof(object)
+                })
+                .ToList()
+        };
+
+        var actionArgs = args.ToDictionary(a => a.Name, a => a.Value);
+        var actionContext = new ActionContext(httpContext, routeData, descriptor);
+        return new ActionExecutingContext(actionContext, new List<IFilterMetadata>(), actionArgs, new object());
     }
 }

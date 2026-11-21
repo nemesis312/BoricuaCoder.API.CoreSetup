@@ -17,8 +17,9 @@ namespace BoricuaCoder.API.CoreSetup.Caching;
 /// <para>
 /// When seconds is 0, the TTL falls back to <c>CoreSetup:Redis:DefaultTTL</c> (default 300 s).<br/>
 /// When a custom key is supplied (e.g. "UserInfo"), the cache key becomes
-/// <c>{PrefixKey}UserInfo:{args}</c>; otherwise the key is derived from the controller/action name
-/// (MVC) or endpoint name (minimal APIs) plus the serialized arguments.
+/// <c>{PrefixKey}UserInfo:{args}:{endpointId}</c>; otherwise it is <c>{PrefixKey}{endpointId}:{args}</c>,
+/// where the endpoint id is the controller/action name (MVC) or the endpoint name or route (minimal APIs)
+/// and each argument is escaped, or hashed when it is long or complex.
 /// </para>
 /// </remarks>
 [AttributeUsage(AttributeTargets.Method | AttributeTargets.Class)]
@@ -52,7 +53,12 @@ public sealed class CacheAttribute : Attribute, IAsyncActionFilter, IEndpointFil
 
         var redisOptions = context.HttpContext.RequestServices.GetService<RedisOptions>() ?? new RedisOptions();
         var ttl = Seconds > 0 ? Seconds : redisOptions.DefaultTTL;
-        var key = CacheKeyGenerator.Generate(CustomKey, context, "");
+        var key = CacheKeyGenerator.Generate(CustomKey, context, userSegment: null);
+        if (key is null)
+        {
+            await next();
+            return;
+        }
 
         var cached = await cacheService.GetAsync<string>(key);
         if (cached is not null)
@@ -89,7 +95,9 @@ public sealed class CacheAttribute : Attribute, IAsyncActionFilter, IEndpointFil
 
         var redisOptions = context.HttpContext.RequestServices.GetService<RedisOptions>() ?? new RedisOptions();
         var ttl = Seconds > 0 ? Seconds : redisOptions.DefaultTTL;
-        var key = CacheKeyGenerator.Generate(CustomKey, context, "");
+        var key = CacheKeyGenerator.Generate(CustomKey, context, userSegment: null);
+        if (key is null)
+            return await next(context);
 
         var cached = await cacheService.GetAsync<string>(key);
         if (cached is not null)
