@@ -4,6 +4,10 @@ using Microsoft.AspNetCore.Authorization;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// CoreSetup:Jwt:Audience is "sample-api", the client id of this API in Keycloak. Tokens carry it
+// through an audience mapper on a client scope assigned to the Swagger client (see the README,
+// "Keycloak Configuration", step 4). Do not use "account": Keycloak adds it to the tokens of most
+// clients in the realm, so it would accept tokens issued for other applications.
 builder.Services.AddCoreSetup(builder.Configuration);
 
 var app = builder.Build();
@@ -28,8 +32,8 @@ app.MapGet("/me", (HttpContext context) =>
 .WithName("GetCurrentUser")
 .WithTags("Identity");
 
-// Cached endpoint — auto key: "sample:api::GetProducts"
-// Re-hydrates from Redis on subsequent requests within DefaultTTL (60 s in dev).
+// Cached per user (the endpoint requires authorization) — key: "sample:api::GetProducts:u-…"
+// Re-hydrates from Redis on subsequent requests within the 300 s TTL.
 app.MapGet("/products", [Authorize] () =>
 {
     var products = new[]
@@ -45,8 +49,18 @@ app.MapGet("/products", [Authorize] () =>
 .WithName("GetProducts")
 .WithTags("Products");
 
-// Cached endpoint with custom key — key: "sample:api::UserInfo:{userId}"
-// All /users/{id}/* variants can be cascade-deleted via ICacheService.DeleteCascadeAsync("UserInfo:{id}")
+// Public data, identical for every caller: one shared entry — key: "sample:api::GetCatalog"
+// Use Shared only when the response never depends on who is calling.
+app.MapGet("/catalog", () =>
+{
+    return Results.Ok(new[] { "Widget A", "Widget B", "Widget C" });
+})
+.AllowAnonymous()
+.AddEndpointFilter(new CacheAttribute(300) { UserScope = CacheUserScope.Shared })
+.WithName("GetCatalog")
+.WithTags("Products");
+
+// Cached per user with a custom key — key: "sample:api::UserInfo:{userId}:GetUser:u-…"
 app.MapGet("/users/{userId}", [Authorize] (int userId) =>
 {
     return Results.Ok(new { userId, name = $"User {userId}", email = $"user{userId}@example.com" });
@@ -55,7 +69,8 @@ app.MapGet("/users/{userId}", [Authorize] (int userId) =>
 .WithName("GetUser")
 .WithTags("Users");
 
-// Cached endpoint with custom key and parameter — key: "sample:api::UserInfo:{userId}:permissions"
+// Same custom key — key: "sample:api::UserInfo:{userId}:GetUserPermissions:u-…"
+// ICacheService.DeleteCascadeAsync("UserInfo:{userId}") removes this entry and the one above, for every user.
 app.MapGet("/users/{userId}/permissions", [Authorize] (int userId) =>
 {
     return Results.Ok(new { userId, permissions = new[] { "read", "write" } });
